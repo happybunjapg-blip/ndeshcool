@@ -38,7 +38,7 @@ class PartnerPerformancePage:
                     ft.Row([
                         ft.Icon(icon, color=color),
                         ft.Column([
-                            ft.Text(t["event"], size=13, weight=ft.FontWeight.W_600, color=ft.Colors.WHITE),
+                            ft.Text(t["event"], size=13, weight=ft.FontWeight.W_600, color=theme.text_primary()),
                             ft.Text(f"{t['date']}  •  {t['time']}", size=11, color=theme.TEXT_DIM),
                         ], spacing=2, expand=True),
                         ft.Column([

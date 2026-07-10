@@ -37,7 +37,7 @@ class PartnerSettingsPage:
         for item in products:
             rows.append(
                 ft.Row([
-                    ft.Text(item.name, width=100, weight=ft.FontWeight.W_600, size=12, color=ft.Colors.WHITE),
+                    ft.Text(item.name, width=100, weight=ft.FontWeight.W_600, size=12, color=theme.text_primary()),
                     ft.TextField(value=str(item.selling_price), width=80, border_radius=10,
                                  content_padding=ft.Padding(8, 8, 8, 8), text_align=ft.TextAlign.CENTER,
                                  on_change=lambda e, n=item.name: self._update_price(n, "selling_price", e.control.value)),
@@ -56,7 +56,7 @@ class PartnerSettingsPage:
                 latest = item.batches[-1]
                 batch_rows.append(
                     ft.Row([
-                        ft.Text(item.name, width=100, size=12, color=ft.Colors.WHITE),
+                        ft.Text(item.name, width=100, size=12, color=theme.text_primary()),
                         ft.Text(f"{len(item.batches)} batches", size=12, color=theme.TEXT_DIM),
                         ft.Text(f"Latest: {latest.qty:g} @ KES {latest.purchase_price}", size=12, color=theme.GOLD),
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)

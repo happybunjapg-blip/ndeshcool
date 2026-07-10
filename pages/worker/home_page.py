@@ -44,7 +44,7 @@ class WorkerHomePage:
                 ft.Row([
                     ft.Container(width=8, height=8, border_radius=4, bgcolor=theme.SUCCESS),
                     ft.Column([
-                        ft.Text("Business Day OPEN", size=13, weight=ft.FontWeight.W_700, color=ft.Colors.WHITE),
+                        ft.Text("Business Day OPEN", size=13, weight=ft.FontWeight.W_700, color=theme.text_primary()),
                         ft.Text(f"Opened {opened_time} by {day.opened_by}", size=11, color=theme.TEXT_DIM),
                     ], spacing=2),
                 ], spacing=8),
@@ -117,7 +117,7 @@ class WorkerHomePage:
         caps_card = glass_card(
             ft.Column([
                 ft.Row([ft.Icon(ft.Icons.FIBER_MANUAL_RECORD, color=theme.GOLD, size=16),
-                        ft.Text("Quick-log Caps", size=13, weight=ft.FontWeight.W_600, color=ft.Colors.WHITE)],
+                        ft.Text("Quick-log Caps", size=13, weight=ft.FontWeight.W_600, color=theme.text_primary())],
                        spacing=8),
                 ft.Row([
                     self.caps_qty_field,

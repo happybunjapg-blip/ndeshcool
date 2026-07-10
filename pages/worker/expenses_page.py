@@ -42,7 +42,7 @@ class WorkerExpensesPage:
         rows = [
             glass_card(
                 ft.Row([
-                    ft.Column([ft.Text(e["description"], size=13, weight=ft.FontWeight.W_600, color=ft.Colors.WHITE),
+                    ft.Column([ft.Text(e["description"], size=13, weight=ft.FontWeight.W_600, color=theme.text_primary()),
                                ft.Text(e["time"], size=11, color=theme.TEXT_DIM)],
                               spacing=2, expand=True),
                     ft.Text(f"KES {e['amount']:,.0f}", size=14, weight=ft.FontWeight.W_700, color=theme.WARNING),
@@ -65,7 +65,7 @@ class WorkerExpensesPage:
             ft.Column(rows, spacing=10),
             glass_card(
                 ft.Row([
-                    ft.Text("Total", size=14, weight=ft.FontWeight.W_600, color=ft.Colors.WHITE),
+                    ft.Text("Total", size=14, weight=ft.FontWeight.W_600, color=theme.text_primary()),
                     ft.Text(f"KES {total:,.0f}", size=16, weight=ft.FontWeight.W_700, color=theme.WARNING),
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 padding=14,

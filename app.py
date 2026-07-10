@@ -49,6 +49,7 @@ class WaterStationApp:
         self.current_page_name: str | None = None
         self.page_controllers: dict = {}
 
+        theme.DARK_MODE = True
         self._configure_page()
         self.services.state.on_change(self._handle_remote_change)
         self._show_splash()
@@ -57,13 +58,11 @@ class WaterStationApp:
     # PAGE / THEME SETUP
     # =====================================================================
     def _configure_page(self):
+        theme.DARK_MODE = self.dark_mode
         self.page.title = "AquaFlow"
         self.page.theme_mode = ft.ThemeMode.DARK if self.dark_mode else ft.ThemeMode.LIGHT
         self.page.theme = ft.Theme(color_scheme_seed=ft.Colors.CYAN)
         self.page.dark_theme = ft.Theme(color_scheme_seed=ft.Colors.CYAN)
-        self.page.window_width = 390
-        self.page.window_height = 844
-        self.page.window_resizable = False
         self.page.padding = 0
         self.page.spacing = 0
         self.page.scroll = None
@@ -72,8 +71,19 @@ class WaterStationApp:
         self._apply_background()
 
     def _apply_background(self):
-        self.page.bgcolor = theme.BG_BOTTOM if self.dark_mode else ft.Colors.WHITE
+        self.page.bgcolor = theme.BG_BOTTOM if self.dark_mode else theme.LIGHT_BG_BOTTOM
         self.page.decoration = ft.BoxDecoration(gradient=theme.background_gradient(self.dark_mode))
+
+    # =====================================================================
+    # SAFE AREA HELPERS
+    # =====================================================================
+    def _safe_top(self) -> int:
+        """Return the top safe-area inset (status bar / notch height)."""
+        return max(theme.SPACING_SM, getattr(self.page, "window_top_safe_area_height", 0) or 0)
+
+    def _safe_bottom(self) -> int:
+        """Return the bottom safe-area inset (home indicator)."""
+        return getattr(self.page, "window_bottom_safe_area_height", 0) or 0
 
     # =====================================================================
     # STAGE 1: SPLASH
@@ -131,75 +141,170 @@ class WaterStationApp:
     # STAGE 3: MAIN SHELL (header + body + bottom nav)
     # =====================================================================
     def _show_shell(self):
-        self.header_container = self._build_header()
+        safe_top = self._safe_top()
+        safe_bottom = self._safe_bottom()
+
+        self.header_container = self._build_header(safe_top)
         self.body_container = ft.Container(
             expand=True,
-            width=390,
-            padding=ft.Padding(12, 10, 12, 14),
+            padding=ft.Padding(
+                theme.SPACING_SM,               # left
+                theme.SPACING_SM,                # top
+                theme.SPACING_SM,                # right
+                theme.SPACING_SM + safe_bottom,  # bottom (extra for nav)
+            ),
             content=self._build_page(self.current_page_name),
         )
         self.root_column = ft.Column(
             controls=[self.header_container, self.body_container],
             expand=True,
             spacing=0,
-            width=390,
             alignment=ft.MainAxisAlignment.START,
         )
         self.page.controls.clear()
         self.page.add(self.root_column)
-        self.page.navigation_bar = self._build_bottom_nav()
+        self.page.navigation_bar = self._build_bottom_nav(safe_bottom)
         self.page.update()
 
-    def _build_header(self) -> ft.Container:
-        self.theme_icon_button = ft.IconButton(
-            icon=ft.Icons.LIGHT_MODE_OUTLINED if self.dark_mode else ft.Icons.DARK_MODE_OUTLINED,
-            icon_color=theme.GOLD if self.dark_mode else ft.Colors.BLUE_GREY_700,
-            tooltip="Toggle theme",
-            on_click=lambda e: self._toggle_theme(),
-            style=ft.ButtonStyle(bgcolor=theme.SURFACE, shape=ft.RoundedRectangleBorder(radius=12)),
-        )
-        logout_button = ft.IconButton(
-            icon=ft.Icons.LOGOUT,
-            icon_color=theme.TEXT_MID,
-            tooltip="Log out",
-            on_click=lambda e: self._logout(),
-            style=ft.ButtonStyle(bgcolor=theme.SURFACE, shape=ft.RoundedRectangleBorder(radius=12)),
-        )
+    def _build_header(self, safe_top: int) -> ft.Container:
+        """Two-tier header:
+        - Top row: safe-area spacer + logo + app title + account icon
+        - Bottom row: greeting + role badge (left), theme toggle (right)
+        """
+        is_dark = self.dark_mode
+
+        # ── Logo badge ──────────────────────────────────────────────
         logo_badge = ft.Container(
-            content=ft.Icon(ft.Icons.WATER_DROP, color=ft.Colors.BLACK, size=20),
-            width=38, height=38, border_radius=12, alignment=ft.Alignment.CENTER,
-            gradient=ft.LinearGradient(begin=ft.Alignment.TOP_LEFT, end=ft.Alignment.BOTTOM_RIGHT,
-                                        colors=[theme.ACCENT, ft.Colors.BLUE_400]),
+            content=ft.Icon(ft.Icons.WATER_DROP, color=ft.Colors.BLACK, size=22),
+            width=42, height=42, border_radius=12, alignment=ft.Alignment.CENTER,
+            gradient=ft.LinearGradient(
+                begin=ft.Alignment.TOP_LEFT, end=ft.Alignment.BOTTOM_RIGHT,
+                colors=[theme.ACCENT, ft.Colors.BLUE_400],
+            ),
             shadow=ft.BoxShadow(blur_radius=14, color=theme.ACCENT_SOFT, offset=ft.Offset(0, 3)),
         )
-        role_badge = ft.Container(
-            content=ft.Text(self.user.role.value.title(), size=11, weight=ft.FontWeight.W_700, color=ft.Colors.BLACK),
-            bgcolor=theme.ACCENT, padding=ft.Padding(10, 4, 10, 4), border_radius=12,
+
+        # ── App title ───────────────────────────────────────────────
+        app_title = ft.Text(
+            "AquaFlow", size=20, weight=ft.FontWeight.BOLD,
+            color=ft.Colors.WHITE if is_dark else theme.LIGHT_TEXT_PRIMARY,
         )
-        header_row = ft.Row(
+
+        # ── Account / profile icon ──────────────────────────────────
+        account_icon = ft.IconButton(
+            icon=ft.Icons.ACCOUNT_CIRCLE_OUTLINED,
+            icon_color=theme.TEXT_MID if is_dark else theme.LIGHT_TEXT_SECONDARY,
+            tooltip="Account",
+            style=ft.ButtonStyle(
+                bgcolor=theme.SURFACE if is_dark else ft.Colors.with_opacity(0.06, theme.LIGHT_TEXT_PRIMARY),
+                shape=ft.RoundedRectangleBorder(radius=12),
+            ),
+        )
+
+        # ── Top bar: logo + title + account icon ────────────────────
+        top_bar = ft.Row(
             controls=[
-                ft.Row([
-                    logo_badge,
-                    ft.Column([
-                        ft.Text("AquaFlow", size=20, weight=ft.FontWeight.BOLD,
-                                color=ft.Colors.WHITE if self.dark_mode else ft.Colors.BLACK),
-                        ft.Text(f"Hi, {self.user.name.split(' ')[0]}", size=11, color=theme.TEXT_DIM),
-                    ], spacing=2),
-                ], spacing=10),
-                ft.Row([role_badge, self.theme_icon_button, logout_button], spacing=8),
+                logo_badge,
+                ft.Container(content=app_title, expand=True, alignment=ft.Alignment(-0.15, 0)),
+                account_icon,
+            ],
+            spacing=theme.SPACING_XS,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        # ── Greeting ────────────────────────────────────────────────
+        greeting = ft.Text(
+            f"Hi, {self.user.name.split(' ')[0]}",
+            size=13,
+            color=theme.TEXT_MID if is_dark else theme.LIGHT_TEXT_SECONDARY,
+            weight=ft.FontWeight.W_500,
+        )
+
+        # ── Role badge ──────────────────────────────────────────────
+        role_badge = ft.Container(
+            content=ft.Text(
+                self.user.role.value.title(), size=11,
+                weight=ft.FontWeight.W_700, color=ft.Colors.BLACK,
+            ),
+            bgcolor=theme.ACCENT,
+            padding=ft.Padding(theme.SPACING_SM, theme.SPACING_XXS, theme.SPACING_SM, theme.SPACING_XXS),
+            border_radius=12,
+        )
+
+        # ── Theme toggle ────────────────────────────────────────────
+        self.theme_icon_button = ft.IconButton(
+            icon=ft.Icons.LIGHT_MODE_OUTLINED if is_dark else ft.Icons.DARK_MODE_OUTLINED,
+            icon_color=theme.GOLD if is_dark else theme.LIGHT_TEXT_SECONDARY,
+            tooltip="Toggle theme",
+            on_click=lambda e: self._toggle_theme(),
+            style=ft.ButtonStyle(
+                bgcolor=theme.SURFACE if is_dark else ft.Colors.with_opacity(0.06, theme.LIGHT_TEXT_PRIMARY),
+                shape=ft.RoundedRectangleBorder(radius=12),
+            ),
+        )
+
+        # ── Logout button ───────────────────────────────────────────
+        logout_button = ft.IconButton(
+            icon=ft.Icons.LOGOUT,
+            icon_color=theme.TEXT_DIM if is_dark else theme.LIGHT_TEXT_DIM,
+            tooltip="Log out",
+            on_click=lambda e: self._logout(),
+            style=ft.ButtonStyle(
+                bgcolor=theme.SURFACE if is_dark else ft.Colors.with_opacity(0.06, theme.LIGHT_TEXT_PRIMARY),
+                shape=ft.RoundedRectangleBorder(radius=12),
+            ),
+        )
+
+        # ── Bottom row: greeting + role | theme + logout ────────────
+        bottom_bar = ft.Row(
+            controls=[
+                ft.Row([greeting, role_badge], spacing=theme.SPACING_XS),
+                ft.Row([self.theme_icon_button, logout_button], spacing=theme.SPACING_XS),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
+
+        # ── Header background ───────────────────────────────────────
+        if is_dark:
+            header_bgcolor = ft.Colors.with_opacity(0.55, theme.BG_TOP)
+        else:
+            header_bgcolor = theme.LIGHT_HEADER_BG
+
+        # ── Assemble header ─────────────────────────────────────────
         return ft.Container(
-            content=header_row,
-            padding=ft.Padding(12, 12, 12, 14),
-            bgcolor=ft.Colors.with_opacity(0.55, theme.BG_TOP) if self.dark_mode else ft.Colors.with_opacity(0.85, ft.Colors.WHITE),
-            border=ft.Border(bottom=ft.BorderSide(1, theme.SURFACE_BORDER)),
-            shadow=ft.BoxShadow(blur_radius=18, color=ft.Colors.with_opacity(0.25, ft.Colors.BLACK), offset=ft.Offset(0, 4)),
+            content=ft.Column(
+                controls=[
+                    ft.Container(height=safe_top),          # safe-area spacer
+                    top_bar,
+                    ft.Container(height=theme.SPACING_XS),  # gap between tiers
+                    bottom_bar,
+                ],
+                spacing=0,
+            ),
+            padding=ft.Padding(
+                theme.SPACING_SM,  # left
+                0,                  # top (handled by safe-area spacer)
+                theme.SPACING_SM,  # right
+                theme.SPACING_SM,  # bottom
+            ),
+            bgcolor=header_bgcolor,
+            border=ft.Border(
+                bottom=ft.BorderSide(
+                    1,
+                    theme.SURFACE_BORDER if is_dark else theme.LIGHT_SURFACE_BORDER,
+                ),
+            ),
+            shadow=ft.BoxShadow(
+                blur_radius=18,
+                color=ft.Colors.with_opacity(0.25, ft.Colors.BLACK)
+                    if is_dark else theme.LIGHT_CARD_SHADOW,
+                offset=ft.Offset(0, 4),
+            ),
         )
 
-    def _build_bottom_nav(self) -> ft.NavigationBar:
+    def _build_bottom_nav(self, safe_bottom: int) -> ft.NavigationBar:
+        is_dark = self.dark_mode
         tabs = ROLE_NAV[self.user.role]
         active_idx = [t[0] for t in tabs].index(self.current_page_name)
         return ft.NavigationBar(
@@ -209,7 +314,8 @@ class WaterStationApp:
                 for (_, label, icon, sel_icon) in tabs
             ],
             on_change=self._on_nav_change,
-            bgcolor=ft.Colors.with_opacity(0.9, theme.BG_TOP) if self.dark_mode else ft.Colors.with_opacity(0.95, ft.Colors.WHITE),
+            bgcolor=ft.Colors.with_opacity(0.9, theme.BG_TOP) if is_dark
+                    else ft.Colors.with_opacity(0.98, theme.LIGHT_HEADER_BG),
             indicator_color=theme.ACCENT_SOFT,
             elevation=12,
         )
@@ -235,6 +341,7 @@ class WaterStationApp:
 
     def _toggle_theme(self):
         self.dark_mode = not self.dark_mode
+        theme.DARK_MODE = self.dark_mode
         self.page.theme_mode = ft.ThemeMode.DARK if self.dark_mode else ft.ThemeMode.LIGHT
         self._apply_background()
         self._show_shell()
@@ -268,7 +375,7 @@ class WaterStationApp:
         controller = self._get_controller(page_name)
         return ft.Column(
             controls=controller.build(),
-            spacing=14,
+            spacing=theme.SPACING_SM,
             scroll=ft.ScrollMode.AUTO,
             expand=True,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,

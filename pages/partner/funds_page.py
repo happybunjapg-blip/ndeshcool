@@ -51,7 +51,7 @@ class PartnerFundsPage:
             glass_card(
                 ft.Row([
                     ft.Column([
-                        ft.Text(e["category"], size=13, weight=ft.FontWeight.W_600, color=ft.Colors.WHITE),
+                        ft.Text(e["category"], size=13, weight=ft.FontWeight.W_600, color=theme.text_primary()),
                         ft.Text(e["description"], size=11, color=theme.TEXT_DIM),
                         ft.Text(e["date"], size=10, color=theme.TEXT_DIM),
                     ], spacing=2, expand=True),
@@ -76,7 +76,7 @@ class PartnerFundsPage:
             ft.Column(rows, spacing=10),
             glass_card(
                 ft.Row([
-                    ft.Text("Total", size=14, weight=ft.FontWeight.W_600, color=ft.Colors.WHITE),
+                    ft.Text("Total", size=14, weight=ft.FontWeight.W_600, color=theme.text_primary()),
                     ft.Text(f"KES {total:,.0f}", size=16, weight=ft.FontWeight.W_700, color=theme.DANGER),
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 padding=14,

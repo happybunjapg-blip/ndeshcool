@@ -33,7 +33,7 @@ def build_business_day_gate(page: ft.Page, services: Services, user, on_opened) 
         ft.Column(
             [
                 logo_badge,
-                ft.Text("No Business Day is open", size=18, weight=ft.FontWeight.W_700, color=ft.Colors.WHITE),
+                ft.Text("No Business Day is open", size=18, weight=ft.FontWeight.W_700, color=theme.text_primary()),
                 ft.Text(
                     "Sales, deliveries, and expenses can't be recorded until the day is opened.",
                     size=12, color=theme.TEXT_DIM, text_align=ft.TextAlign.CENTER,

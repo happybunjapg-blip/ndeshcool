@@ -32,7 +32,7 @@ class PartnerDashboardPage:
                     ft.Row([
                         ft.Container(width=8, height=8, border_radius=4, bgcolor=theme.SUCCESS),
                         ft.Column([
-                            ft.Text("Business Day OPEN", size=13, weight=ft.FontWeight.W_700, color=ft.Colors.WHITE),
+                            ft.Text("Business Day OPEN", size=13, weight=ft.FontWeight.W_700, color=theme.text_primary()),
                             ft.Text(f"Opened {opened_time} by {day.opened_by}", size=11, color=theme.TEXT_DIM),
                         ], spacing=2),
                     ], spacing=8),
@@ -79,7 +79,7 @@ class PartnerDashboardPage:
         water_card = glass_card(
             ft.Column([
                 ft.Row([ft.Icon(ft.Icons.WATER_DROP, color=theme.ACCENT),
-                        ft.Text("Water Usage", size=16, weight=ft.FontWeight.W_600, color=ft.Colors.WHITE)],
+                        ft.Text("Water Usage", size=16, weight=ft.FontWeight.W_600, color=theme.text_primary())],
                        spacing=8),
                 ft.Row([
                     ft.Text(f"Total: {current['water_total']}L", size=13, color=theme.TEXT_MID),
