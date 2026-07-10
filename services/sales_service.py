@@ -204,7 +204,37 @@ class SalesService:
         return tx
 
     # ---------------------------------------------------------------
-    # 5. Customer Payment -- NOT a sale. Reduces an existing debt.
+    # 5. Meter Reading — initial + final from the worker, cleaning
+    #    calculated automatically from what was actually sold.
+    # ---------------------------------------------------------------
+    def record_meter_reading(self, initial: float, final: float):
+        """Record today's water meter reading.
+
+        cleaning is NOT entered by the worker — it's derived:
+            total_processed = final - initial
+            cleaning = total_processed - sold_water
+
+        ``sold_water`` comes from the individual refill / bottle /
+        bulk-delivery transactions already recorded via SalesService
+        (never duplicated here).
+        """
+        self._require_open_business_day()
+        if final <= initial:
+            raise SalesError("Final reading must be greater than initial.")
+        reading = self._today_water_reading()
+        total_processed = final - initial
+        cleaning = total_processed - reading["sold_water"]
+        reading["initial"] = initial
+        reading["final"] = final
+        reading["cleaning"] = max(0.0, cleaning)
+        self._persist_water_reading(reading)
+        self.state.log_timeline(
+            f"Meter reading — {initial}L → {final}L (cleaning {reading['cleaning']:.1f}L, sold {reading['sold_water']:.1f}L)",
+            "restock", f"{reading['sold_water']:.1f}L sold", final,
+        )
+
+    # ---------------------------------------------------------------
+    # 6. Customer Payment -- NOT a sale. Reduces an existing debt.
     # ---------------------------------------------------------------
     def record_customer_payment(self, customer_id: str, amount: float):
         self._require_open_business_day()
@@ -230,7 +260,7 @@ class SalesService:
             self.state.repo.save_customer(customer)
 
     # ---------------------------------------------------------------
-    # 6. Expenses -- affect profit, are never a sale.
+    # 7. Expenses -- affect profit, are never a sale.
     # ---------------------------------------------------------------
     def record_expense(self, description: str, amount: float, is_capital: bool = False,
                         category: str = "Other"):

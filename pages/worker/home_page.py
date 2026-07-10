@@ -20,8 +20,6 @@ class WorkerHomePage:
                                            expand=True, border_radius=theme.RADIUS_INPUT)
         self.final_field = ft.TextField(label="Final Reading (L)", keyboard_type=ft.KeyboardType.NUMBER,
                                          expand=True, border_radius=theme.RADIUS_INPUT)
-        self.cleaning_field = ft.TextField(label="Cleaning Usage (L)", value="0", keyboard_type=ft.KeyboardType.NUMBER,
-                                            expand=True, border_radius=theme.RADIUS_INPUT)
         self.caps_qty_field = ft.TextField(label="Caps sold", keyboard_type=ft.KeyboardType.NUMBER,
                                             expand=True, border_radius=theme.RADIUS_INPUT)
 
@@ -58,24 +56,17 @@ class WorkerHomePage:
         try:
             initial = float(self.initial_field.value or 0)
             final = float(self.final_field.value or 0)
-            cleaning = float(self.cleaning_field.value or 0)
         except ValueError:
             show_snack(self.page, "Enter valid numbers.", theme.DANGER)
             return
-        if initial >= final:
-            show_snack(self.page, "Final must be > initial.", theme.DANGER)
+        try:
+            self.services.sales.record_meter_reading(initial, final)
+        except SalesError as err:
+            show_snack(self.page, str(err), theme.DANGER)
             return
-        sold = final - initial - cleaning
-        record = {
-            "date": TODAY.isoformat(), "initial": initial, "final": final,
-            "cleaning": cleaning, "sold_water": sold,
-        }
-        self.services.state.repo.upsert_today_water_reading(record)
-        self.services.state.water_readings.append(record)
         self.initial_field.value = ""
         self.final_field.value = ""
-        self.cleaning_field.value = "0"
-        show_snack(self.page, f"Reading saved! Water sold: {sold:.1f}L")
+        show_snack(self.page, "Meter reading saved! Cleaning calculated automatically.")
         self.on_navigate("home")
 
     def _quick_log_caps(self, e):
@@ -107,9 +98,9 @@ class WorkerHomePage:
             ft.Column([
                 section_title("Water Meter", ft.Icons.WATER_DROP),
                 ft.Row([self.initial_field, self.final_field], spacing=10),
-                ft.Row([self.cleaning_field, primary_button(
+                primary_button(
                     "Submit Reading", ft.Icons.SAVE_OUTLINED, self._submit_water_reading,
-                )], spacing=10),
+                ),
             ], spacing=12),
             padding=16, accent=theme.ACCENT,
         )
