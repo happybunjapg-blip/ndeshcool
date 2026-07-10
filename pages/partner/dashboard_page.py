@@ -64,7 +64,7 @@ class PartnerDashboardPage:
                 kpi_card("Water Sold", f"{current['water_sold']:,.0f}L", ft.Icons.WATER_DROP, theme.GOLD,
                          trend=self.services.analytics.trend(current["water_sold"], previous["water_sold"])),
             ],
-            runs_count=2, max_extent=180, spacing=12, run_spacing=12, child_aspect_ratio=1.15, height=250,
+            runs_count=2, max_extent=160, spacing=8, run_spacing=8, child_aspect_ratio=1.05, height=220,
         )
 
         outstanding_card = glass_card(
@@ -100,7 +100,7 @@ class PartnerDashboardPage:
         products = self.services.inventory.all_products()
         stock_grid = ft.GridView(
             controls=[stock_card(item) for item in products],
-            runs_count=2, max_extent=170, spacing=10, run_spacing=10, child_aspect_ratio=1.05, height=400,
+            runs_count=2, max_extent=150, spacing=8, run_spacing=8, child_aspect_ratio=1.0, height=220,
         )
 
         return [

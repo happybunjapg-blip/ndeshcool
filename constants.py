@@ -17,7 +17,8 @@ PERIOD_LENGTHS = {"daily": 1, "weekly": 7, "monthly": 30}
 
 # Water Refill pricing: customer brings their own container, only water leaves
 # inventory (tracked via the meter, not the product stock table).
-WATER_REFILL_PRICES = {5: 30, 10: 50, 20: 80}   # liters -> price (KES)
+# New rule: 1L is bought at 1 sh and sold at 10 sh.
+WATER_REFILL_PRICES = {5: 50, 10: 100, 20: 200}   # liters -> price (KES)
 
 # Bulk delivery presets
 BULK_DELIVERY_SIZES = [500, 1000]               # liters

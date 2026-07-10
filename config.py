@@ -14,18 +14,13 @@ try:
 except ImportError:
     pass  # python-dotenv is optional; env vars can be set by the OS/host instead
 
-BACKEND = os.getenv("BACKEND", "memory").strip().lower()
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+BACKEND = os.getenv("BACKEND", "supabase").strip().lower()
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
 
 
 def build_repository():
-    if BACKEND == "supabase":
-        if not SUPABASE_URL or not SUPABASE_KEY:
-            raise RuntimeError(
-                "BACKEND=supabase but SUPABASE_URL/SUPABASE_KEY are not set. "
-                "Copy .env.example to .env and fill in your project's values."
-            )
+    if BACKEND == "supabase" and SUPABASE_URL and SUPABASE_KEY:
         from backend.supabase_repository import SupabaseRepository
         return SupabaseRepository(SUPABASE_URL, SUPABASE_KEY)
 

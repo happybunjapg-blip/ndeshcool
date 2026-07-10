@@ -7,7 +7,7 @@ def pill_style(bgcolor, fgcolor=ft.Colors.BLACK) -> ft.ButtonStyle:
         bgcolor=bgcolor,
         color=fgcolor,
         shape=ft.RoundedRectangleBorder(radius=theme.RADIUS_INPUT),
-        padding=ft.Padding(18, 14, 18, 14),
+        padding=ft.Padding(20, 16, 20, 16),
         elevation=0,
     )
 

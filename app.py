@@ -61,9 +61,14 @@ class WaterStationApp:
         self.page.theme_mode = ft.ThemeMode.DARK if self.dark_mode else ft.ThemeMode.LIGHT
         self.page.theme = ft.Theme(color_scheme_seed=ft.Colors.CYAN)
         self.page.dark_theme = ft.Theme(color_scheme_seed=ft.Colors.CYAN)
+        self.page.window_width = 390
+        self.page.window_height = 844
+        self.page.window_resizable = False
         self.page.padding = 0
         self.page.spacing = 0
         self.page.scroll = None
+        self.page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
+        self.page.vertical_alignment = ft.MainAxisAlignment.START
         self._apply_background()
 
     def _apply_background(self):
@@ -129,12 +134,16 @@ class WaterStationApp:
         self.header_container = self._build_header()
         self.body_container = ft.Container(
             expand=True,
-            padding=ft.Padding(16, 12, 16, 24),
+            width=390,
+            padding=ft.Padding(12, 10, 12, 14),
             content=self._build_page(self.current_page_name),
         )
         self.root_column = ft.Column(
             controls=[self.header_container, self.body_container],
-            expand=True, spacing=0,
+            expand=True,
+            spacing=0,
+            width=390,
+            alignment=ft.MainAxisAlignment.START,
         )
         self.page.controls.clear()
         self.page.add(self.root_column)
@@ -184,7 +193,7 @@ class WaterStationApp:
         )
         return ft.Container(
             content=header_row,
-            padding=ft.Padding(16, 44, 16, 16),
+            padding=ft.Padding(12, 12, 12, 14),
             bgcolor=ft.Colors.with_opacity(0.55, theme.BG_TOP) if self.dark_mode else ft.Colors.with_opacity(0.85, ft.Colors.WHITE),
             border=ft.Border(bottom=ft.BorderSide(1, theme.SURFACE_BORDER)),
             shadow=ft.BoxShadow(blur_radius=18, color=ft.Colors.with_opacity(0.25, ft.Colors.BLACK), offset=ft.Offset(0, 4)),
@@ -215,6 +224,9 @@ class WaterStationApp:
             self._show_business_day_gate()
             return
         self.current_page_name = page_name
+        self._render_body(page_name)
+
+    def _render_body(self, page_name: str):
         self.body_container.content = self._build_page(page_name)
         if self.page.navigation_bar:
             tabs = ROLE_NAV[self.user.role]
@@ -254,4 +266,10 @@ class WaterStationApp:
 
     def _build_page(self, page_name: str) -> ft.Column:
         controller = self._get_controller(page_name)
-        return ft.Column(controls=controller.build(), spacing=16, scroll=ft.ScrollMode.AUTO, expand=True)
+        return ft.Column(
+            controls=controller.build(),
+            spacing=14,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        )

@@ -1,8 +1,18 @@
+import sys
+from pathlib import Path
 from datetime import datetime
 from typing import List, Optional, Dict, Any
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from models import Product, Customer, Transaction, BusinessDay
-from .repository import Repository
-from . import seed_data
+
+try:
+    from .repository import Repository
+except ImportError:  # allow running this file directly as a script
+    from backend.repository import Repository
 
 
 class MemoryRepository(Repository):
@@ -11,13 +21,13 @@ class MemoryRepository(Repository):
     real tables, just against Python lists instead."""
 
     def __init__(self):
-        self._products: List[Product] = seed_data.seed_products()
-        self._customers: List[Customer] = seed_data.seed_customers()
+        self._products: List[Product] = []
+        self._customers: List[Customer] = []
         self._transactions: List[Transaction] = []
         self._daily_expenses: List[Dict[str, Any]] = []
         self._capital_expenses: List[Dict[str, Any]] = []
-        self._timeline: List[Dict[str, Any]] = seed_data.seed_timeline()
-        self._water_readings: List[Dict[str, Any]] = seed_data.seed_water_readings()
+        self._timeline: List[Dict[str, Any]] = []
+        self._water_readings: List[Dict[str, Any]] = []
         self._business_days: List[BusinessDay] = []
 
     # ---- Products ----------------------------------------------------

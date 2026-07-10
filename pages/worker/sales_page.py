@@ -93,7 +93,7 @@ class WorkerSalesPage:
 
     def _fields_for_type(self) -> list:
         if self.tx_type == "water_refill":
-            return [self.refill_liters_dd, self.payment_dd, self.boda_checkbox]
+            return [self.qty_field, self.payment_dd, self.boda_checkbox]
         if self.tx_type == "product_sale":
             return [self.product_dd, self.qty_field, self.payment_dd]
         if self.tx_type == "bottle_water_sale":
@@ -111,28 +111,28 @@ class WorkerSalesPage:
                 return
 
             if self.tx_type == "water_refill":
-                liters = int(self.refill_liters_dd.value)
+                liters = float(self.qty_field.value or 0)
                 tx = self.services.sales.record_water_refill(
                     liters, self.payment_dd.value, boda=self.boda_checkbox.value,
                     customer_id=customer_id, on_credit=on_credit,
                 )
-                show_snack(self.page, f"Refill recorded: {liters}L (KES {tx.amount:,.0f})")
+                show_snack(self.page, f"Refill recorded: {liters:g}L (KES {tx.amount:,.0f})")
 
             elif self.tx_type == "product_sale":
-                qty = int(self.qty_field.value or 0)
+                qty = float(self.qty_field.value or 0)
                 tx = self.services.sales.record_product_sale(
                     self.product_dd.value, qty, self.payment_dd.value,
                     customer_id=customer_id, on_credit=on_credit,
                 )
-                show_snack(self.page, f"Sale recorded: {qty} x {self.product_dd.value} (KES {tx.amount:,.0f})")
+                show_snack(self.page, f"Sale recorded: {qty:g} x {self.product_dd.value} (KES {tx.amount:,.0f})")
 
             elif self.tx_type == "bottle_water_sale":
-                qty = int(self.qty_field.value or 0)
+                qty = float(self.qty_field.value or 0)
                 tx = self.services.sales.record_bottle_water_sale(
                     self.bottle_dd.value, qty, self.payment_dd.value,
                     boda=self.boda_checkbox.value, customer_id=customer_id, on_credit=on_credit,
                 )
-                show_snack(self.page, f"Sale recorded: {qty} x {self.bottle_dd.value} (KES {tx.amount:,.0f})")
+                show_snack(self.page, f"Sale recorded: {qty:g} x {self.bottle_dd.value} (KES {tx.amount:,.0f})")
 
             elif self.tx_type == "bulk_delivery":
                 liters = float(self.bulk_liters_dd.value)

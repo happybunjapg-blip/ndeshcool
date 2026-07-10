@@ -8,7 +8,7 @@ def glass_card(content, padding=16, margin=0, accent=None) -> ft.Container:
         content=content,
         padding=padding,
         margin=margin,
-        border_radius=theme.RADIUS_CARD,
+        border_radius=14,
         gradient=ft.LinearGradient(
             begin=ft.Alignment.TOP_LEFT,
             end=ft.Alignment.BOTTOM_RIGHT,
@@ -29,8 +29,8 @@ def glass_card(content, padding=16, margin=0, accent=None) -> ft.Container:
 def section_title(text: str, icon=None) -> ft.Row:
     controls = [ft.Container(width=4, height=18, border_radius=2, bgcolor=theme.ACCENT)]
     if icon:
-        controls.append(ft.Icon(icon, size=17, color=theme.ACCENT))
-    controls.append(ft.Text(text, size=15, weight=ft.FontWeight.W_700, color=ft.Colors.WHITE))
+        controls.append(ft.Icon(icon, size=18, color=theme.ACCENT))
+    controls.append(ft.Text(text, size=16, weight=ft.FontWeight.W_700, color=ft.Colors.WHITE))
     return ft.Row(controls, spacing=8)
 
 
@@ -63,7 +63,7 @@ def kpi_card(title, value, icon, color, trend: Optional[str] = None, live=False)
                 ft.Text("vs prior period", size=10, color=theme.TEXT_DIM),
             ], spacing=3)
         )
-    return glass_card(content, padding=14, accent=color)
+    return glass_card(content, padding=12, accent=color)
 
 
 def _stock_status_color(item) -> Tuple[str, str]:
@@ -97,7 +97,7 @@ def stock_card(item, compact: bool = False) -> ft.Container:
         )
     else:
         children.append(ft.Text("units", size=10, color=theme.TEXT_DIM))
-    return glass_card(ft.Column(children, spacing=7), padding=13, accent=accent)
+    return glass_card(ft.Column(children, spacing=6), padding=12, accent=accent)
 
 
 def customer_card(customer, on_click=None) -> ft.Container:

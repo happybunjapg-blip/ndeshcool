@@ -6,6 +6,8 @@ from services import Services
 
 def build_login(page: ft.Page, services: Services, on_login_success) -> ft.Container:
     error_text = ft.Text("", size=12, color=theme.DANGER, visible=False)
+    email_value = ""
+    password_value = ""
 
     email_field = ft.TextField(
         label="Email",
@@ -23,15 +25,35 @@ def build_login(page: ft.Page, services: Services, on_login_success) -> ft.Conta
     )
     remember_me = ft.Checkbox(label="Remember me", value=True, active_color=theme.ACCENT)
 
-    def _do_login(e):
+    def _sync_values(_e=None):
+        nonlocal email_value, password_value
+        email_value = email_field.value or ""
+        password_value = password_field.value or ""
+
+    def _complete_login(email: str, password: str):
+        nonlocal email_value, password_value
+        email_value = email
+        password_value = password
+        email_field.value = email
+        password_field.value = password
         error_text.visible = False
-        user = services.auth.authenticate(email_field.value, password_field.value)
+        user = services.auth.authenticate(email, password)
         if not user:
             error_text.value = "Invalid email or password. Try partner@example.com / worker@example.com."
             error_text.visible = True
             page.update()
             return
         on_login_success(user)
+
+    def _do_login(e):
+        _sync_values(e)
+        _complete_login(email_value, password_value)
+
+    def _use_demo_login(e, email: str):
+        _complete_login(email, "anything")
+
+    email_field.on_change = lambda e: _sync_values(e)
+    password_field.on_change = lambda e: _sync_values(e)
 
     def _forgot_password(e):
         error_text.value = "Password reset isn't available yet in this preview build."
@@ -73,6 +95,13 @@ def build_login(page: ft.Page, services: Services, on_login_success) -> ft.Conta
                 ),
                 error_text,
                 primary_button("Sign In", ft.Icons.LOGIN, _do_login, width=float("inf")),
+                ft.Row(
+                    [
+                        ft.TextButton("Demo Partner", on_click=lambda e: _use_demo_login(e, "partner@example.com")),
+                        ft.TextButton("Demo Worker", on_click=lambda e: _use_demo_login(e, "worker@example.com")),
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                ),
                 ft.Container(height=4),
                 ft.Text(
                     "Demo accounts: partner@example.com / worker@example.com (any password)",

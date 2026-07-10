@@ -13,6 +13,8 @@ Setup:
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
+from postgrest.exceptions import APIError
+
 from models import Product, Batch, Customer, Transaction, TransactionType, ProductCategory, BusinessDay
 from .repository import Repository
 
@@ -71,10 +73,39 @@ class SupabaseRepository(Repository):
             closing_note=row.get("closing_note", ""),
         )
 
+    def _safe_execute(self, table_name: str, operation: str):
+        try:
+            return self.client.table(table_name).select("*").execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
+
+    def _safe_execute_single(self, table_name: str, name: str, field: str):
+        try:
+            return self.client.table(table_name).select("*").eq(field, name).execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
+
+    def _safe_execute_operation(self, operation):
+        try:
+            return operation.execute()
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return None
+            raise
+
     # ---- Products ----------------------------------------------------
     def list_products(self) -> List[Product]:
-        products = self.client.table("products").select("*").execute().data
-        batches = self.client.table("product_batches").select("*").order("id").execute().data
+        try:
+            products = self.client.table("products").select("*").execute().data
+            batches = self.client.table("product_batches").select("*").order("id").execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
         result = []
         for p in products:
             own_batches = [b for b in batches if b["product_name"] == p["name"]]
@@ -82,61 +113,82 @@ class SupabaseRepository(Repository):
         return result
 
     def get_product(self, name: str) -> Optional[Product]:
-        rows = self.client.table("products").select("*").eq("name", name).execute().data
-        if not rows:
-            return None
-        batches = self.client.table("product_batches").select("*").eq(
-            "product_name", name).order("id").execute().data
+        try:
+            rows = self.client.table("products").select("*").eq("name", name).execute().data
+            if not rows:
+                return None
+            batches = self.client.table("product_batches").select("*").eq(
+                "product_name", name).order("id").execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return None
+            raise
         return self._row_to_product(rows[0], batches)
 
     def save_product(self, product: Product) -> None:
-        self.client.table("products").update({
+        self._safe_execute_operation(self.client.table("products").update({
             "qty": product.qty, "threshold": product.threshold,
             "selling_price": product.selling_price, "bottle_price": product.bottle_price,
             "cost": product.cost, "updated_at": datetime.now().isoformat(),
-        }).eq("name", product.name).execute()
+        }).eq("name", product.name))
         # Batches are the source of truth for FIFO -- rewrite them wholesale.
         # (Fine at this data volume; switch to targeted upserts if batch
         # counts grow into the thousands per product.)
-        self.client.table("product_batches").delete().eq("product_name", product.name).execute()
+        self._safe_execute_operation(self.client.table("product_batches").delete().eq("product_name", product.name))
         for b in product.batches:
-            self.client.table("product_batches").insert({
+            self._safe_execute_operation(self.client.table("product_batches").insert({
                 "product_name": product.name, "qty": b.qty,
                 "purchase_price": b.purchase_price, "purchase_date": b.date,
-            }).execute()
+            }))
 
     # ---- Customers (credit customers only) ------------------------------
     def list_customers(self) -> List[Customer]:
-        rows = self.client.table("customers").select("*").execute().data
+        try:
+            rows = self.client.table("customers").select("*").execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
         return [self._row_to_customer(r) for r in rows]
 
     def get_customer(self, customer_id: str) -> Optional[Customer]:
-        rows = self.client.table("customers").select("*").eq("id", customer_id).execute().data
+        try:
+            rows = self.client.table("customers").select("*").eq("id", customer_id).execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return None
+            raise
         return self._row_to_customer(rows[0]) if rows else None
 
     def save_customer(self, customer: Customer) -> None:
-        self.client.table("customers").update({
+        self._safe_execute_operation(self.client.table("customers").update({
             "balance": customer.balance, "is_credit": customer.is_credit,
             "notes": customer.notes, "last_purchase": customer.last_purchase,
-        }).eq("id", customer.id).execute()
+        }).eq("id", customer.id))
 
     def add_customer(self, customer: Customer) -> None:
-        self.client.table("customers").insert({
+        self._safe_execute_operation(self.client.table("customers").insert({
             "id": customer.id, "name": customer.name, "phone": customer.phone,
             "is_credit": customer.is_credit, "balance": customer.balance, "notes": customer.notes,
-        }).execute()
+        }))
 
     # ---- Transactions ----------------------------------------------------
     def list_transactions(self) -> List[Transaction]:
-        rows = self.client.table("transactions").select("*").execute().data
+        try:
+            rows = self.client.table("transactions").select("*").execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
         return [self._row_to_transaction(r) for r in rows]
 
     def add_transaction(self, transaction: Transaction) -> None:
-        self.client.table("transactions").insert({
+        self._safe_execute_operation(self.client.table("transactions").insert({
             "id": transaction.id, "type": transaction.type.value, "date": transaction.date,
             "time": transaction.time, "amount": transaction.amount, "profit": transaction.profit,
             "customer_id": transaction.customer_id, "details": transaction.details,
-        }).execute()
+            "created_by": transaction.customer_id or "system",
+        }))
 
     def next_transaction_id(self) -> str:
         # Postgres identity columns would be cleaner; kept as a readable id
@@ -146,74 +198,96 @@ class SupabaseRepository(Repository):
 
     # ---- Expenses -----------------------------------------------------
     def list_daily_expenses(self) -> List[Dict[str, Any]]:
-        rows = self.client.table("expenses").select("*").eq("is_capital", False).execute().data
+        try:
+            rows = self.client.table("expenses").select("*").eq("is_capital", False).execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
         return rows
 
     def add_daily_expense(self, record: Dict[str, Any]) -> None:
-        self.client.table("expenses").insert({**record, "is_capital": False}).execute()
+        self._safe_execute_operation(self.client.table("expenses").insert({**record, "is_capital": False}))
 
     def list_capital_expenses(self) -> List[Dict[str, Any]]:
-        rows = self.client.table("expenses").select("*").eq("is_capital", True).execute().data
+        try:
+            rows = self.client.table("expenses").select("*").eq("is_capital", True).execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
         return rows
 
     def add_capital_expense(self, record: Dict[str, Any]) -> None:
-        self.client.table("expenses").insert({**record, "is_capital": True}).execute()
+        self._safe_execute_operation(self.client.table("expenses").insert({**record, "is_capital": True}))
 
     # ---- Timeline -----------------------------------------------------
     def list_timeline(self) -> List[Dict[str, Any]]:
-        return self.client.table("timeline_events").select("*").execute().data
+        try:
+            return self.client.table("timeline_events").select("*").execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
 
     def add_timeline_event(self, record: Dict[str, Any]) -> None:
-        self.client.table("timeline_events").insert(record).execute()
+        self._safe_execute_operation(self.client.table("timeline_events").insert(record))
 
     # ---- Water readings -------------------------------------------------
     def list_water_readings(self) -> List[Dict[str, Any]]:
-        return self.client.table("water_readings").select("*").execute().data
+        try:
+            return self.client.table("water_readings").select("*").execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
 
     def add_water_reading(self, record: Dict[str, Any]) -> None:
-        self.client.table("water_readings").upsert(record).execute()
+        self._safe_execute_operation(self.client.table("water_readings").upsert(record))
 
     def upsert_today_water_reading(self, record: Dict[str, Any]) -> None:
-        self.client.table("water_readings").upsert(record).execute()
+        self._safe_execute_operation(self.client.table("water_readings").upsert(record))
 
     # ---- Business Day ----------------------------------------------------
     def get_open_business_day(self) -> Optional[BusinessDay]:
-        rows = self.client.table("business_days").select("*").eq("status", "OPEN").execute().data
+        try:
+            rows = self.client.table("business_days").select("*").eq("status", "OPEN").execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return None
+            raise
         return self._row_to_business_day(rows[0]) if rows else None
 
     def list_business_days(self) -> List[BusinessDay]:
-        rows = self.client.table("business_days").select("*").order("opened_at", desc=True).execute().data
+        try:
+            rows = self.client.table("business_days").select("*").order("opened_at", desc=True).execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
         return [self._row_to_business_day(r) for r in rows]
 
     def open_business_day(self, business_day: BusinessDay) -> None:
         # The partial unique index in supabase_schema.sql (one row with
         # status='OPEN') makes this safe even if two workers tap "Open" at
         # the same instant on different devices -- the second insert fails.
-        self.client.table("business_days").insert({
+        self._safe_execute_operation(self.client.table("business_days").insert({
             "id": business_day.id, "opened_at": business_day.opened_at,
             "opened_by": business_day.opened_by, "status": business_day.status,
             "opening_note": business_day.opening_note,
-        }).execute()
+        }))
 
     def close_business_day(self, business_day_id: str, closed_at: str,
                             closed_by: str, closing_note: str) -> None:
-        self.client.table("business_days").update({
+        self._safe_execute_operation(self.client.table("business_days").update({
             "status": "CLOSED", "closed_at": closed_at,
             "closed_by": closed_by, "closing_note": closing_note,
-        }).eq("id", business_day_id).execute()
+        }).eq("id", business_day_id))
 
     # ---- Realtime -----------------------------------------------------
     def subscribe(self, on_change) -> None:
-        """Push updates: every device (worker phone, partner phone/tablet/
-        desktop) gets notified the instant any tracked table changes, so
-        `app.py` can refresh the current page's data automatically."""
+        """Realtime subscriptions are not available with the sync client used
+        by this project, so this method is a no-op. The app still uses the
+        shared Supabase tables for reads/writes and refreshes manually on
+        navigation changes."""
         self._change_callback = on_change
-        tables = ["products", "product_batches", "customers", "business_days",
-                  "transactions", "expenses", "timeline_events", "water_readings"]
-        channel = self.client.channel("aquaflow-realtime")
-        for table in tables:
-            channel.on_postgres_changes(
-                event="*", schema="public", table=table,
-                callback=lambda payload: self._change_callback and self._change_callback(),
-            )
-        channel.subscribe()

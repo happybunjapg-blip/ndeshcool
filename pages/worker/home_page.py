@@ -99,8 +99,8 @@ class WorkerHomePage:
         products = self.services.inventory.all_products()
         stock_grid = ft.GridView(
             controls=[stock_card(item, compact=True) for item in products],
-            runs_count=2, max_extent=170, spacing=10, run_spacing=10,
-            child_aspect_ratio=1.2, height=380,
+            runs_count=2, max_extent=150, spacing=8, run_spacing=8,
+            child_aspect_ratio=1.1, height=220,
         )
 
         water_card = glass_card(

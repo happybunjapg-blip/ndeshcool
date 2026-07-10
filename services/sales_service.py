@@ -24,6 +24,9 @@ from models import TransactionType, ProductCategory, Transaction
 from backend.state import AppState
 from .inventory_service import InventoryService
 
+WATER_BUY_PRICE_PER_LITER = 1.0
+WATER_SELL_PRICE_PER_LITER = 10.0
+
 
 class SalesError(Exception):
     pass
@@ -83,15 +86,18 @@ class SalesService:
     # 1. Water Refill -- customer's own container. Only the water resource
     #    (tracked via the meter) decreases. Bottle/product stock is untouched.
     # ---------------------------------------------------------------
-    def record_water_refill(self, liters: int, payment: str, boda: bool = False,
+    def record_water_refill(self, liters: float, payment: str, boda: bool = False,
                              customer_id: Optional[str] = None, on_credit: bool = False):
         self._require_open_business_day()
-        if liters not in WATER_REFILL_PRICES:
-            raise SalesError(f"No price configured for {liters}L refills.")
-        price = WATER_REFILL_PRICES[liters]
+        if liters <= 0:
+            raise SalesError("Refill amount must be positive.")
+        if liters in WATER_REFILL_PRICES:
+            price = WATER_REFILL_PRICES[liters]
+        else:
+            price = liters * WATER_SELL_PRICE_PER_LITER
         boda_fee = BODA_FEE if boda else 0
         revenue = price + boda_fee
-        profit = revenue  # water itself has near-zero marginal cost of goods
+        profit = revenue - (liters * WATER_BUY_PRICE_PER_LITER)
         reading = self._today_water_reading()
         reading["sold_water"] += liters
         self._persist_water_reading(reading)
