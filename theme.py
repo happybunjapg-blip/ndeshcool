@@ -126,6 +126,22 @@ SPACING_LG = 24
 SPACING_XL = 32
 
 # =====================================================================
+# MOBILE / RESPONSIVE LAYOUT CONSTANTS
+# =====================================================================
+# Horizontal padding for page content on mobile (avoids cards touching edges)
+MOBILE_PADDING_H = 16
+# Top/bottom padding inside the scrollable body area
+MOBILE_PADDING_V = 8
+# Extra bottom margin for cards to create vertical breathing room
+CARD_MARGIN_BOTTOM = 12
+# Section-to-section spacing in the body column
+SECTION_SPACING = 20
+# Header horizontal padding (slightly wider on mobile)
+HEADER_PADDING_H = 16
+# Root page left/right safe margin (extra insurance against edge collision)
+ROOT_MARGIN_H = 0
+
+# =====================================================================
 # TIMELINE
 # =====================================================================
 TIMELINE_STYLE = {

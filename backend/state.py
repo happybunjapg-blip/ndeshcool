@@ -44,6 +44,14 @@ class AppState:
         page) so remote writes from other devices show up automatically."""
         self._on_change = callback
 
+    def notify_change(self):
+        """Call this after any local mutation (sale, expense, stock update)
+        so the UI re-renders immediately without waiting for a remote push
+        or a manual page navigation."""
+        self.refresh()
+        if self._on_change:
+            self._on_change()
+
     def _handle_remote_change(self):
         self.refresh()
         if self._on_change:
@@ -97,6 +105,7 @@ class AppState:
         self.repo.open_business_day(day)
         self.business_days.append(day)
         self.log_timeline(f"Business Day opened by {opened_by}", "business_day", "", 0)
+        self.notify_change()
         return day
 
     def close_business_day(self, closed_by: str, closing_note: str = ""):
@@ -110,6 +119,7 @@ class AppState:
         day.closed_by = closed_by
         day.closing_note = closing_note
         self.log_timeline(f"Business Day closed by {closed_by}", "business_day", "", 0)
+        self.notify_change()
         return day
 
     # ---------------------------------------------------------------
@@ -132,11 +142,17 @@ class AppState:
         revenue = sum(t.amount for t in period_tx if t.type.value in
                       ("water_refill", "product_sale", "bottle_water_sale", "bulk_delivery"))
         profit = sum(t.profit for t in period_tx)
-        expenses_in_range = [
+        daily_in_range = [
             e for e in self.daily_expenses
             if start <= datetime.strptime(e["date"], "%Y-%m-%d").date() <= end
         ]
-        losses = sum(e["amount"] for e in expenses_in_range)
+        capital_in_range = [
+            e for e in self.capital_expenses
+            if start <= datetime.strptime(e["date"], "%Y-%m-%d").date() <= end
+        ]
+        daily_expenses_total = sum(e["amount"] for e in daily_in_range)
+        capital_expenses_total = sum(e["amount"] for e in capital_in_range)
+        losses = daily_expenses_total + capital_expenses_total
         water = [
             r for r in self.water_readings
             if start <= datetime.strptime(r["date"], "%Y-%m-%d").date() <= end
@@ -148,6 +164,8 @@ class AppState:
             "revenue": revenue,
             "profit": profit,
             "losses": losses,
+            "daily_expenses_total": daily_expenses_total,
+            "capital_expenses_total": capital_expenses_total,
             "water_total": water_total,
             "water_cleaning": water_cleaning,
             "water_sold": water_sold,

@@ -4,7 +4,14 @@ import theme
 
 
 def glass_card(content, padding=16, margin=0, accent=None) -> ft.Container:
-    """Mode-aware card — solid white in light mode, glass gradient in dark mode."""
+    """Mode-aware card — solid white in light mode, glass gradient in dark mode.
+
+    By default each card gets a bottom margin (``CARD_MARGIN_BOTTOM``) to
+    create comfortable vertical breathing room on mobile.  Pass an explicit
+    ``margin`` value to override.
+    """
+    if margin == 0:
+        margin = ft.Margin(0, 0, 0, theme.CARD_MARGIN_BOTTOM)
     return ft.Container(
         content=content,
         padding=padding,

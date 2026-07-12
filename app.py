@@ -15,6 +15,7 @@ from pages.partner.settings_page import PartnerSettingsPage
 from pages.partner.reports_page import PartnerReportsPage
 from pages.partner.performance_page import PartnerPerformancePage
 from pages.partner.funds_page import PartnerFundsPage
+from widgets import page_content
 
 
 ROLE_NAV = {
@@ -63,6 +64,8 @@ class WaterStationApp:
         self.page.theme_mode = ft.ThemeMode.DARK if self.dark_mode else ft.ThemeMode.LIGHT
         self.page.theme = ft.Theme(color_scheme_seed=ft.Colors.CYAN)
         self.page.dark_theme = ft.Theme(color_scheme_seed=ft.Colors.CYAN)
+        # Page-level padding is 0; the SafeArea wrapper (see _show_shell)
+        # handles system-inset protection on mobile.
         self.page.padding = 0
         self.page.spacing = 0
         self.page.scroll = None
@@ -79,7 +82,9 @@ class WaterStationApp:
     # =====================================================================
     def _safe_top(self) -> int:
         """Return the top safe-area inset (status bar / notch height)."""
-        return max(theme.SPACING_SM, getattr(self.page, "window_top_safe_area_height", 0) or 0)
+        # Minimum of 20px ensures content never touches the top edge even on
+        # devices that report 0 safe-area inset (e.g. desktop, some emulators).
+        return max(20, getattr(self.page, "window_top_safe_area_height", 0) or 0)
 
     def _safe_bottom(self) -> int:
         """Return the bottom safe-area inset (home indicator)."""
@@ -148,10 +153,10 @@ class WaterStationApp:
         self.body_container = ft.Container(
             expand=True,
             padding=ft.Padding(
-                theme.SPACING_SM,               # left
-                theme.SPACING_SM,                # top
-                theme.SPACING_SM,                # right
-                theme.SPACING_SM + safe_bottom,  # bottom (extra for nav)
+                theme.MOBILE_PADDING_H,            # left — 16px, cards no longer touch edges
+                theme.MOBILE_PADDING_V,             # top — 8px breathing room below header
+                theme.MOBILE_PADDING_H,             # right — 16px
+                theme.MOBILE_PADDING_V + safe_bottom,  # bottom — 8px + nav safe area
             ),
             content=self._build_page(self.current_page_name),
         )
@@ -161,8 +166,10 @@ class WaterStationApp:
             spacing=0,
             alignment=ft.MainAxisAlignment.START,
         )
+        # Wrap the entire shell in SafeArea so Android notch / status bar
+        # and iOS home indicator are respected automatically.
         self.page.controls.clear()
-        self.page.add(self.root_column)
+        self.page.add(ft.SafeArea(self.root_column))
         self.page.navigation_bar = self._build_bottom_nav(safe_bottom)
         self.page.update()
 
@@ -283,10 +290,10 @@ class WaterStationApp:
                 spacing=0,
             ),
             padding=ft.Padding(
-                theme.SPACING_SM,  # left
-                0,                  # top (handled by safe-area spacer)
-                theme.SPACING_SM,  # right
-                theme.SPACING_SM,  # bottom
+                theme.HEADER_PADDING_H,  # left — 16px
+                0,                        # top (handled by safe-area spacer)
+                theme.HEADER_PADDING_H,  # right — 16px
+                theme.SPACING_SM,        # bottom
             ),
             bgcolor=header_bgcolor,
             border=ft.Border(
@@ -373,10 +380,5 @@ class WaterStationApp:
 
     def _build_page(self, page_name: str) -> ft.Column:
         controller = self._get_controller(page_name)
-        return ft.Column(
-            controls=controller.build(),
-            spacing=theme.SPACING_SM,
-            scroll=ft.ScrollMode.AUTO,
-            expand=True,
-            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-        )
+        # Use the reusable page_content wrapper for consistent section spacing
+        return page_content(controls=controller.build())

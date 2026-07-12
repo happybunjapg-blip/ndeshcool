@@ -33,10 +33,6 @@ def build_splash(page: ft.Page, on_finish, delay_seconds: float = 1.4) -> ft.Con
 
     def _advance():
         on_finish()
-        try:
-            page.update()
-        except Exception:
-            pass
 
     timer = threading.Timer(delay_seconds, _advance)
     timer.daemon = True

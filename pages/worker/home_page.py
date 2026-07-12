@@ -7,7 +7,7 @@ from services import Services, SalesError, BusinessDayError
 
 
 class WorkerHomePage:
-    """Today's meter reading, a glance at stock, and a one-tap caps log --
+    """Today's meter reading and a glance at stock —
     the things a worker checks first thing in the morning."""
 
     def __init__(self, page: ft.Page, services: Services, on_navigate, user=None):
@@ -20,8 +20,6 @@ class WorkerHomePage:
                                            expand=True, border_radius=theme.RADIUS_INPUT)
         self.final_field = ft.TextField(label="Final Reading (L)", keyboard_type=ft.KeyboardType.NUMBER,
                                          expand=True, border_radius=theme.RADIUS_INPUT)
-        self.caps_qty_field = ft.TextField(label="Caps sold", keyboard_type=ft.KeyboardType.NUMBER,
-                                            expand=True, border_radius=theme.RADIUS_INPUT)
 
     def _close_business_day(self, e):
         try:
@@ -69,23 +67,6 @@ class WorkerHomePage:
         show_snack(self.page, "Meter reading saved! Cleaning calculated automatically.")
         self.on_navigate("home")
 
-    def _quick_log_caps(self, e):
-        try:
-            qty = int(self.caps_qty_field.value or 0)
-            if qty <= 0:
-                raise ValueError
-        except ValueError:
-            show_snack(self.page, "Enter valid quantity.", theme.DANGER)
-            return
-        try:
-            self.services.sales.record_product_sale("Bottle Caps", qty, payment="Cash")
-        except SalesError as err:
-            show_snack(self.page, str(err), theme.DANGER)
-            return
-        self.caps_qty_field.value = ""
-        show_snack(self.page, f"{qty} caps logged.", theme.GOLD)
-        self.on_navigate("home")
-
     def build(self) -> list:
         products = self.services.inventory.all_products()
         stock_grid = ft.GridView(
@@ -103,19 +84,6 @@ class WorkerHomePage:
                 ),
             ], spacing=12),
             padding=16, accent=theme.ACCENT,
-        )
-
-        caps_card = glass_card(
-            ft.Column([
-                ft.Row([ft.Icon(ft.Icons.FIBER_MANUAL_RECORD, color=theme.GOLD, size=16),
-                        ft.Text("Quick-log Caps", size=13, weight=ft.FontWeight.W_600, color=theme.text_primary())],
-                       spacing=8),
-                ft.Row([
-                    self.caps_qty_field,
-                    primary_button("Log", ft.Icons.ADD_CIRCLE_OUTLINE, self._quick_log_caps, bgcolor=theme.GOLD),
-                ], spacing=8),
-            ], spacing=10),
-            padding=14, accent=theme.GOLD,
         )
 
         low_stock = self.services.inventory.low_stock()
@@ -137,4 +105,4 @@ class WorkerHomePage:
 
         return [*alert_banner, self._business_day_card(), water_card,
                 section_title("Stock Glance", ft.Icons.INVENTORY_2_OUTLINED),
-                stock_grid, caps_card]
+                stock_grid]

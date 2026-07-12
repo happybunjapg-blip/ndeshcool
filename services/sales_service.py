@@ -111,6 +111,7 @@ class SalesService:
         if boda:
             self._charge_rider_fee()
         self.state.log_timeline(f"Water Refill — {liters}L", "sale", f"-{liters}L", reading["sold_water"])
+        self.state.notify_change()
         return tx
 
     # ---------------------------------------------------------------
@@ -138,6 +139,7 @@ class SalesService:
         if on_credit and customer_id:
             self._add_to_balance(customer_id, revenue)
         self.state.log_timeline(f"Sale — {product_name}", "sale", f"-{qty:g}", product.qty)
+        self.state.notify_change()
         return tx
 
     # ---------------------------------------------------------------
@@ -158,11 +160,10 @@ class SalesService:
         cost = self.inventory.fifo_deduct(product_name, qty)
         boda_fee = BODA_FEE if boda else 0
         revenue = qty * product.selling_price + boda_fee
-        # Profit = Selling Price - FIFO Cost. The boda fee is real revenue
-        # until the rider is paid -- that -20/-50 split is handled entirely
-        # by _charge_rider_fee() below, not by subtracting it here too.
-        profit = revenue - cost
         liters_each = BOTTLE_WATER_LITERS.get(product_name, 0)
+        # Cost = Bottle FIFO cost + Water cost (KES 1/L for the water inside)
+        water_cost = liters_each * qty * WATER_BUY_PRICE_PER_LITER
+        profit = revenue - cost - water_cost
         reading = self._today_water_reading()
         reading["sold_water"] += liters_each * qty
         self._persist_water_reading(reading)
@@ -176,6 +177,7 @@ class SalesService:
         if boda:
             self._charge_rider_fee()
         self.state.log_timeline(f"Sale — {product_name} (filled)", "sale", f"-{qty:g}", product.qty)
+        self.state.notify_change()
         return tx
 
     # ---------------------------------------------------------------
@@ -201,6 +203,7 @@ class SalesService:
             self._add_to_balance(customer_id, revenue)
         self.state.log_timeline(f"Bulk Delivery — {liters:g}L to driver {driver}", "delivery",
                                  f"-{liters:g}L", reading["sold_water"])
+        self.state.notify_change()
         return tx
 
     # ---------------------------------------------------------------
@@ -232,6 +235,7 @@ class SalesService:
             f"Meter reading — {initial}L → {final}L (cleaning {reading['cleaning']:.1f}L, sold {reading['sold_water']:.1f}L)",
             "restock", f"{reading['sold_water']:.1f}L sold", final,
         )
+        self.state.notify_change()
 
     # ---------------------------------------------------------------
     # 6. Customer Payment -- NOT a sale. Reduces an existing debt.
@@ -250,6 +254,7 @@ class SalesService:
             {"note": "Debt payment"}, customer_id=customer_id,
         )
         self.state.log_timeline(f"Payment received — {customer.name}", "payment", f"KES {amount:,.0f}", 0)
+        self.state.notify_change()
         return tx
 
     def _add_to_balance(self, customer_id: str, amount: float):
@@ -285,4 +290,5 @@ class SalesService:
             self.state.repo.add_daily_expense(record)
             self.state.daily_expenses.append(record)
         self.state.log_timeline(f"Expense — {description}", "expense", f"-KES {amount:,.0f}", 0)
+        self.state.notify_change()
         return record

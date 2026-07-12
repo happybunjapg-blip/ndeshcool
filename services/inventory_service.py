@@ -30,6 +30,7 @@ class InventoryService:
                 product.batches.pop(0)
         product.qty -= qty
         self.state.repo.save_product(product)
+        self.state.notify_change()
         return total_cost
 
     def restock(self, product_name: str, qty: float, purchase_price: float):
@@ -42,3 +43,4 @@ class InventoryService:
         product.qty += qty
         self.state.repo.save_product(product)
         self.state.log_timeline(f"Restock — {product_name}", "restock", f"+{qty:g}", product.qty)
+        self.state.notify_change()
