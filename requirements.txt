@@ -3,4 +3,5 @@ python-dotenv==1.2.2
 requests
 httpx
 qrcode
-supabase
+supabase[realtime]>=2.0
+websockets>=12.0

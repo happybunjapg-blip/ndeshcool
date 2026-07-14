@@ -10,8 +10,11 @@ Setup:
     4. Set BACKEND=supabase in .env.
     5. pip install -r requirements.txt (adds `supabase`).
 """
+import asyncio
+import threading
+import time
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Callable
 
 from postgrest.exceptions import APIError
 
@@ -25,14 +28,30 @@ except ImportError:
     Client = None
 
 
+RECONNECT_BASE_DELAY = 1.0   # seconds
+RECONNECT_MAX_DELAY = 30.0   # seconds
+REALTIME_TABLES = [
+    "transactions", "expenses", "products", "product_batches",
+    "customers", "water_readings", "business_days", "timeline_events",
+]
+
+
 class SupabaseRepository(Repository):
     def __init__(self, url: str, key: str):
         if create_client is None:
             raise RuntimeError(
                 "The `supabase` package isn't installed. Run: pip install supabase"
             )
+        self._url = url
+        self._key = key
         self.client: Client = create_client(url, key)
-        self._change_callback = None
+        self._change_callback: Optional[Callable] = None
+
+        # ---- Realtime thread-safety primitives --------------------------
+        self._realtime_pending = threading.Event()
+        self._last_realtime_ts = 0.0
+        self._stop_event = threading.Event()
+        self._realtime_thread: Optional[threading.Thread] = None
 
     # ---- Row <-> model mapping ------------------------------------------
     @staticmethod
@@ -43,8 +62,7 @@ class SupabaseRepository(Repository):
             qty=row["qty"],
             threshold=row["threshold"],
             selling_price=row["selling_price"],
-            bottle_price=row["bottle_price"],
-            cost=row["cost"],
+            buying_price=row["buying_price"],
             batches=[Batch(b["qty"], b["purchase_price"], str(b["purchase_date"])) for b in batch_rows],
         )
 
@@ -128,8 +146,8 @@ class SupabaseRepository(Repository):
     def save_product(self, product: Product) -> None:
         self._safe_execute_operation(self.client.table("products").update({
             "qty": product.qty, "threshold": product.threshold,
-            "selling_price": product.selling_price, "bottle_price": product.bottle_price,
-            "cost": product.cost, "updated_at": datetime.now().isoformat(),
+            "selling_price": product.selling_price,
+            "buying_price": product.buying_price, "updated_at": datetime.now().isoformat(),
         }).eq("name", product.name))
         # Batches are the source of truth for FIFO -- rewrite them wholesale.
         # (Fine at this data volume; switch to targeted upserts if batch
@@ -284,10 +302,114 @@ class SupabaseRepository(Repository):
             "closed_by": closed_by, "closing_note": closing_note,
         }).eq("id", business_day_id))
 
-    # ---- Realtime -----------------------------------------------------
+    # =====================================================================
+    # REALTIME — cross-device sync via Supabase Realtime
+    # =====================================================================
     def subscribe(self, on_change) -> None:
-        """Realtime subscriptions are not available with the sync client used
-        by this project, so this method is a no-op. The app still uses the
-        shared Supabase tables for reads/writes and refreshes manually on
-        navigation changes."""
+        """Subscribe to Postgres Changes on every table this app uses.
+
+        Runs the async realtime listener in a background daemon thread.
+        When a change is detected, sets a thread-safe pending flag instead
+        of calling the callback directly — the app's main-thread timer picks
+        it up and re-renders safely.
+
+        The subscription auto-reconnects with exponential backoff.
+        """
         self._change_callback = on_change
+
+        if self._realtime_thread and self._realtime_thread.is_alive():
+            return  # Already subscribed
+
+        self._stop_event.clear()
+        self._realtime_thread = threading.Thread(
+            target=self._run_realtime_loop,
+            name="supabase-realtime",
+            daemon=True,
+        )
+        self._realtime_thread.start()
+
+    def cancel_subscriptions(self):
+        """Clean shutdown — call when the app logs out or exits."""
+        self._stop_event.set()
+        if self._realtime_thread:
+            self._realtime_thread.join(timeout=5)
+
+    # -- Thread-safe query methods for the main-thread checker ----------
+    def check_realtime_pending(self) -> bool:
+        """Returns True if a realtime event arrived since last check."""
+        return self._realtime_pending.is_set()
+
+    def clear_realtime_pending(self):
+        """Call after processing a realtime event to reset the flag."""
+        self._realtime_pending.clear()
+
+    def last_realtime_time(self) -> float:
+        """Timestamp (time.monotonic) of the most recent realtime event."""
+        return self._last_realtime_ts
+
+    # -- Internal: async listener loop running in a background thread ---
+    def _run_realtime_loop(self):
+        """Entry point for the background thread. Creates a fresh asyncio
+        event loop and runs the realtime listener with reconnection."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self._realtime_listener())
+        finally:
+            loop.close()
+
+    async def _realtime_listener(self):
+        """Subscribe to all relevant Postgres tables and forward changes
+        to the pending flag. Reconnects with exponential backoff on error."""
+        from supabase import create_client
+
+        delay = RECONNECT_BASE_DELAY
+
+        while not self._stop_event.is_set():
+            try:
+                # Create a *separate* async client for the realtime channel
+                # (the sync client in self.client can't subscribe).
+                async_client = create_client(self._url, self._key, is_async=True)
+                channels = []
+
+                def make_handler(table_name: str):
+                    """Closure to capture the table name per channel."""
+                    def _on_change(payload):
+                        # Called from the realtime library's internal thread.
+                        # We only signal the flag — no UI work here.
+                        self._last_realtime_ts = time.monotonic()
+                        self._realtime_pending.set()
+                    return _on_change
+
+                for table in REALTIME_TABLES:
+                    channel = async_client.channel(f"table-{table}")
+                    channel.on_postgres_changes(
+                        "*",                     # listen to INSERT, UPDATE, DELETE
+                        schema="public",
+                        table=table,
+                        callback=make_handler(table),
+                    )
+                    await channel.subscribe()
+                    channels.append(channel)
+
+                # Connected successfully — reset backoff
+                delay = RECONNECT_BASE_DELAY
+
+                # Keep alive until we're asked to stop
+                while not self._stop_event.is_set():
+                    await asyncio.sleep(1)
+
+                # Clean unsubscribe
+                for ch in channels:
+                    try:
+                        await ch.unsubscribe()
+                    except Exception:
+                        pass
+                break  # Normal exit
+
+            except Exception:
+                # Connection or subscription failed — wait and retry
+                if self._stop_event.is_set():
+                    break
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, RECONNECT_MAX_DELAY)
