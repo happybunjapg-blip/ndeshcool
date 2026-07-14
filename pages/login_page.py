@@ -118,7 +118,8 @@ def build_login(page: ft.Page, services: Services, on_login_success) -> ft.Conta
             colors=[ft.Colors.with_opacity(0.07, ft.Colors.WHITE), ft.Colors.with_opacity(0.02, ft.Colors.WHITE)],
         ),
         border=ft.Border.all(1, theme.SURFACE_BORDER),
-        width=360,
+        # Responsive: use expand=True with constrained max width instead of fixed 360px
+        expand=True,
     )
 
     return ft.Container(

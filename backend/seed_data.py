@@ -10,7 +10,7 @@ def seed_products():
     return [
         Product(
             name="10L Bottles", category=ProductCategory.BOTTLE_WATER,
-            qty=15, threshold=5, selling_price=100, bottle_price=50, cost=60,
+            qty=15, threshold=5, selling_price=100, buying_price=60,
             batches=[
                 Batch(10, 55, (TODAY - timedelta(days=20)).isoformat()),
                 Batch(5, 65, (TODAY - timedelta(days=5)).isoformat()),
@@ -18,7 +18,7 @@ def seed_products():
         ),
         Product(
             name="20L Bottles", category=ProductCategory.BOTTLE_WATER,
-            qty=7, threshold=3, selling_price=180, bottle_price=80, cost=110,
+            qty=7, threshold=3, selling_price=180, buying_price=110,
             batches=[
                 Batch(5, 105, (TODAY - timedelta(days=15)).isoformat()),
                 Batch(2, 115, (TODAY - timedelta(days=3)).isoformat()),
@@ -26,7 +26,7 @@ def seed_products():
         ),
         Product(
             name="5L Bottles", category=ProductCategory.BOTTLE_WATER,
-            qty=40, threshold=10, selling_price=60, bottle_price=30, cost=35,
+            qty=40, threshold=10, selling_price=60, buying_price=35,
             batches=[
                 Batch(30, 33, (TODAY - timedelta(days=30)).isoformat()),
                 Batch(10, 38, (TODAY - timedelta(days=8)).isoformat()),
@@ -34,17 +34,17 @@ def seed_products():
         ),
         Product(
             name="1L Sachets", category=ProductCategory.BOTTLE_WATER,
-            qty=100, threshold=20, selling_price=10, bottle_price=5, cost=5,
+            qty=100, threshold=20, selling_price=10, buying_price=5,
             batches=[Batch(100, 4.5, (TODAY - timedelta(days=10)).isoformat())],
         ),
         Product(
             name="Bottle Caps", category=ProductCategory.ACCESSORY,
-            qty=200, threshold=30, selling_price=2, bottle_price=0, cost=2,
+            qty=200, threshold=30, selling_price=2, buying_price=2,
             batches=[Batch(200, 2, (TODAY - timedelta(days=5)).isoformat())],
         ),
         Product(
             name="Water Pumps", category=ProductCategory.ACCESSORY,
-            qty=3, threshold=2, selling_price=1500, bottle_price=0, cost=950,
+            qty=3, threshold=2, selling_price=1500, buying_price=950,
             batches=[Batch(3, 950, (TODAY - timedelta(days=60)).isoformat())],
         ),
     ]

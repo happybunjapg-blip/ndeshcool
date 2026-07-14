@@ -18,8 +18,7 @@ class Product:
     qty: float
     threshold: float
     selling_price: float
-    bottle_price: float = 0.0
-    cost: float = 0.0
+    buying_price: float = 0.0
     batches: List[Batch] = field(default_factory=list)
 
     def is_out(self) -> bool:

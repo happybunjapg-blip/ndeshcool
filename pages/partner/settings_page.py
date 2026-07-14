@@ -69,9 +69,8 @@ class PartnerSettingsPage:
 
         header = ft.Row([
             ft.Text("Product", width=100, size=11, color=theme.TEXT_DIM, weight=ft.FontWeight.W_600),
-            ft.Text("Price", width=80, size=11, color=theme.TEXT_DIM, weight=ft.FontWeight.W_600, text_align=ft.TextAlign.CENTER),
-            ft.Text("Bottle", width=80, size=11, color=theme.TEXT_DIM, weight=ft.FontWeight.W_600, text_align=ft.TextAlign.CENTER),
-            ft.Text("Cost", width=80, size=11, color=theme.TEXT_DIM, weight=ft.FontWeight.W_600, text_align=ft.TextAlign.CENTER),
+            ft.Text("Sell Price", width=80, size=11, color=theme.TEXT_DIM, weight=ft.FontWeight.W_600, text_align=ft.TextAlign.CENTER),
+            ft.Text("Buy Price", width=80, size=11, color=theme.TEXT_DIM, weight=ft.FontWeight.W_600, text_align=ft.TextAlign.CENTER),
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
 
         rows = [header]
@@ -82,27 +81,47 @@ class PartnerSettingsPage:
                     ft.TextField(value=str(item.selling_price), width=80, border_radius=10,
                                  content_padding=ft.Padding(8, 8, 8, 8), text_align=ft.TextAlign.CENTER,
                                  on_change=lambda e, n=item.name: self._update_price(n, "selling_price", e.control.value)),
-                    ft.TextField(value=str(item.bottle_price), width=80, border_radius=10,
+                    ft.TextField(value=str(item.buying_price), width=80, border_radius=10,
                                  content_padding=ft.Padding(8, 8, 8, 8), text_align=ft.TextAlign.CENTER,
-                                 on_change=lambda e, n=item.name: self._update_price(n, "bottle_price", e.control.value)),
-                    ft.TextField(value=str(item.cost), width=80, border_radius=10,
-                                 content_padding=ft.Padding(8, 8, 8, 8), text_align=ft.TextAlign.CENTER,
-                                 on_change=lambda e, n=item.name: self._update_price(n, "cost", e.control.value)),
+                                 on_change=lambda e, n=item.name: self._update_price(n, "buying_price", e.control.value)),
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER)
             )
 
         batch_rows = []
         for item in products:
             if item.batches:
-                latest = item.batches[-1]
-                total_qty = sum(b.qty for b in item.batches)
+                # Product-level summary
                 batch_rows.append(
-                    ft.Row([
-                        ft.Text(item.name, width=100, size=12, color=theme.text_primary()),
-                        ft.Text(f"{len(item.batches)} batches", size=12, color=theme.TEXT_DIM, expand=True),
-                        ft.Text(f"{total_qty:g} units  •  latest: KES {latest.purchase_price:,.0f}",
-                                size=12, color=theme.GOLD),
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Row([
+                                ft.Text(item.name, size=13, weight=ft.FontWeight.W_700,
+                                        color=theme.text_primary()),
+                                ft.Text(f"Total: {sum(b.qty for b in item.batches):g} units",
+                                        size=12, color=theme.TEXT_DIM),
+                            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                            *[
+                                ft.Container(
+                                    content=ft.Row([
+                                        ft.Text(f"Batch #{i+1}", size=11,
+                                                color=theme.text_secondary(), width=60),
+                                        ft.Text(f"{b.qty:g} remaining", size=12,
+                                                weight=ft.FontWeight.W_600,
+                                                color=theme.SUCCESS if b.qty > 0 else theme.TEXT_DIM,
+                                                expand=True),
+                                        ft.Text(f"@ KES {b.purchase_price:,.0f}", size=11,
+                                                color=theme.GOLD, width=90),
+                                        ft.Text(b.date, size=10, color=theme.TEXT_DIM, width=80),
+                                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                                    padding=ft.Padding(8, 4, 8, 4),
+                                    border_radius=8,
+                                    bgcolor=ft.Colors.with_opacity(0.03, ft.Colors.WHITE),
+                                )
+                                for i, b in enumerate(item.batches)
+                            ],
+                        ], spacing=6),
+                        padding=ft.Padding(0, 0, 0, 8),
+                    )
                 )
 
         return [
