@@ -47,8 +47,20 @@ class AppState:
     def notify_change(self):
         """Call this after any local mutation (sale, expense, stock update)
         so the UI re-renders immediately without waiting for a remote push
-        or a manual page navigation."""
-        self.refresh()
+        or a manual page navigation.
+
+        PERFORMANCE FIX: this used to call self.refresh(), which re-fetches
+        all 8 tables (products+batches, customers, transactions, daily
+        expenses, capital expenses, timeline, water readings, business days)
+        from Supabase -- roughly 9 sequential network round-trips -- on
+        EVERY single sale, expense, or stock change. That's what made a
+        single sale take several seconds (up to ~20s on a slow connection).
+        It's unnecessary: every caller (SalesService, InventoryService, etc.)
+        already mutates self.state's in-memory lists directly *before*
+        calling notify_change(), so the local cache is already correct.
+        We only need to refresh from the network when a change comes from
+        somewhere else (another device) -- that's what
+        `_handle_remote_change` is for."""
         if self._on_change:
             self._on_change()
 
@@ -133,6 +145,80 @@ class AppState:
         end = end or date.today()
         start = end - timedelta(days=self.period_length_days(period) - 1)
         return start, end
+
+    # ---------------------------------------------------------------
+    # Calendar-accurate period boundaries.
+    #
+    # BUG FIX: `period_dates()` above treats "monthly" as a rolling window
+    # of a fixed 30 days (PERIOD_LENGTHS["monthly"] = 30). That means a
+    # "monthly" report never actually lines up with a real calendar month
+    # -- e.g. a report generated on Feb 28 would start on Jan 29, not Feb 1,
+    # and a 31-day month like March would be short-changed by a day. The
+    # methods below compute the *real* calendar day / week / month that
+    # contains a given reference date, so "this month" always means
+    # "the 1st through the last day of this actual month" (28/29/30/31
+    # days, whatever the month actually has), and weeks always run
+    # Monday -> Sunday.
+    # ---------------------------------------------------------------
+    @staticmethod
+    def day_bounds(ref: Optional[date] = None) -> Tuple[date, date]:
+        ref = ref or date.today()
+        return ref, ref
+
+    @staticmethod
+    def week_bounds(ref: Optional[date] = None) -> Tuple[date, date]:
+        """Monday -> Sunday calendar week containing `ref`."""
+        ref = ref or date.today()
+        start = ref - timedelta(days=ref.weekday())  # Monday
+        end = start + timedelta(days=6)               # Sunday
+        return start, end
+
+    @staticmethod
+    def month_bounds(ref: Optional[date] = None) -> Tuple[date, date]:
+        """1st -> last day (28/29/30/31, whatever that month actually has)
+        of the calendar month containing `ref`."""
+        ref = ref or date.today()
+        start = ref.replace(day=1)
+        if start.month == 12:
+            next_month_start = start.replace(year=start.year + 1, month=1, day=1)
+        else:
+            next_month_start = start.replace(month=start.month + 1, day=1)
+        end = next_month_start - timedelta(days=1)
+        return start, end
+
+    def calendar_period_dates(self, period: str, ref: Optional[date] = None) -> Tuple[date, date]:
+        """Calendar-accurate equivalent of period_dates(): 'daily' -> the
+        single day, 'weekly' -> Mon-Sun week, 'monthly' -> the full
+        calendar month, all containing `ref` (defaults to today)."""
+        if period == "weekly":
+            return self.week_bounds(ref)
+        if period == "monthly":
+            return self.month_bounds(ref)
+        return self.day_bounds(ref)
+
+    def detail_in_range(self, start: date, end: date) -> Dict:
+        """Line-item detail for a period: every transaction and every
+        expense that happened, so a daily report can show exactly what
+        occurred (sales, payments, expenses) rather than only totals."""
+        tx_in_range = [
+            t for t in self.transactions
+            if start <= datetime.strptime(t.date, "%Y-%m-%d").date() <= end
+        ]
+        daily_exp_in_range = [
+            e for e in self.daily_expenses
+            if start <= datetime.strptime(e["date"], "%Y-%m-%d").date() <= end
+        ]
+        capital_exp_in_range = [
+            e for e in self.capital_expenses
+            if start <= datetime.strptime(e["date"], "%Y-%m-%d").date() <= end
+        ]
+        # Newest first so the most recent activity shows up first.
+        tx_in_range.sort(key=lambda t: (t.date, t.time), reverse=True)
+        return {
+            "transactions": tx_in_range,
+            "daily_expenses": daily_exp_in_range,
+            "capital_expenses": capital_exp_in_range,
+        }
 
     def calculate_period_metrics(self, start: date, end: date) -> Dict:
         period_tx = [

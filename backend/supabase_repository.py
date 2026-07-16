@@ -150,14 +150,20 @@ class SupabaseRepository(Repository):
             "buying_price": product.buying_price, "updated_at": datetime.now().isoformat(),
         }).eq("name", product.name))
         # Batches are the source of truth for FIFO -- rewrite them wholesale.
-        # (Fine at this data volume; switch to targeted upserts if batch
-        # counts grow into the thousands per product.)
+        # PERFORMANCE FIX: this used to fire one network round-trip per batch
+        # (delete + N separate inserts), which is why a single sale could
+        # take many seconds once a product had accumulated several batches.
+        # A single bulk insert cuts every sale down to 2 network calls total,
+        # regardless of how many batches the product has.
         self._safe_execute_operation(self.client.table("product_batches").delete().eq("product_name", product.name))
-        for b in product.batches:
-            self._safe_execute_operation(self.client.table("product_batches").insert({
-                "product_name": product.name, "qty": b.qty,
-                "purchase_price": b.purchase_price, "purchase_date": b.date,
-            }))
+        if product.batches:
+            self._safe_execute_operation(self.client.table("product_batches").insert([
+                {
+                    "product_name": product.name, "qty": b.qty,
+                    "purchase_price": b.purchase_price, "purchase_date": b.date,
+                }
+                for b in product.batches
+            ]))
 
     # ---- Customers (credit customers only) ------------------------------
     def list_customers(self) -> List[Customer]:
