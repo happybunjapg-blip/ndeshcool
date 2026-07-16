@@ -1,4 +1,4 @@
-import threading
+import asyncio
 import flet as ft
 import theme
 
@@ -31,12 +31,11 @@ def build_splash(page: ft.Page, on_finish, delay_seconds: float = 1.4) -> ft.Con
         spacing=14,
     )
 
-    def _advance():
+    async def _advance():
+        await asyncio.sleep(delay_seconds)
         on_finish()
 
-    timer = threading.Timer(delay_seconds, _advance)
-    timer.daemon = True
-    timer.start()
+    page.run_task(_advance)
 
     return ft.Container(
         content=content,
