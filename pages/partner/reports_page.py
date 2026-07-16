@@ -99,7 +99,7 @@ class PartnerReportsPage:
                 ft.Container(
                     content=ft.Text(self.PERIOD_LABELS[p], size=13,
                                      weight=ft.FontWeight.W_700 if active else ft.FontWeight.W_500,
-                                     color=theme.BG if active else theme.text_secondary()),
+                                     color=ft.Colors.BLACK if active else theme.text_secondary()),
                     padding=ft.Padding(14, 8, 14, 8),
                     border_radius=10,
                     bgcolor=theme.ACCENT if active else None,
