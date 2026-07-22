@@ -23,7 +23,8 @@ class WorkerHomePage:
 
     def _close_business_day(self, e):
         try:
-            self.services.business_day.close_day(self.user.email if self.user else "worker")
+            email = self.user.email if self.user and hasattr(self.user, 'email') else "worker"
+            self.services.business_day.close_day(email)
         except BusinessDayError as err:
             show_snack(self.page, str(err), theme.DANGER)
             return

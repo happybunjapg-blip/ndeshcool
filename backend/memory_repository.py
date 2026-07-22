@@ -21,6 +21,7 @@ class MemoryRepository(Repository):
     real tables, just against Python lists instead."""
 
     def __init__(self):
+        super().__init__()
         self._products: List[Product] = []
         self._customers: List[Customer] = []
         self._transactions: List[Transaction] = []

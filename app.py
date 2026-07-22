@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import time
+from datetime import datetime
 import flet as ft
 import theme
 from models import Role, User
@@ -8,6 +9,8 @@ from services import Services
 
 from pages.splash_page import build_splash
 from pages.login_page import build_login
+from pages.create_account_page import build_create_account
+from pages.forgot_password_page import build_forgot_password
 from pages.worker.business_day_page import build_business_day_gate
 from pages.worker.home_page import WorkerHomePage
 from pages.worker.sales_page import WorkerSalesPage
@@ -20,10 +23,9 @@ from pages.partner.performance_page import PartnerPerformancePage
 from pages.partner.funds_page import PartnerFundsPage
 from widgets import page_content
 
-# Polling configuration for real-time cross-device sync.
-REALTIME_POLL_INTERVAL = 2.0    # seconds between realtime-pending checks
-DEBOUNCE_WINDOW = 0.5           # seconds — batch rapid changes into one refresh
-POLLING_FALLBACK_INTERVAL = 30.0  # seconds — periodic full refresh as safety net
+REALTIME_POLL_INTERVAL = 2.0
+DEBOUNCE_WINDOW = 0.5
+POLLING_FALLBACK_INTERVAL = 30.0
 
 
 ROLE_NAV = {
@@ -33,7 +35,7 @@ ROLE_NAV = {
         ("customers", "Customers", ft.Icons.PEOPLE_OUTLINE, ft.Icons.PEOPLE),
         ("expenses", "Expenses", ft.Icons.RECEIPT_LONG_OUTLINED, ft.Icons.RECEIPT_LONG),
     ],
-    Role.PARTNER: [
+    Role.OWNER: [
         ("dashboard", "Dashboard", ft.Icons.DASHBOARD_OUTLINED, ft.Icons.DASHBOARD),
         ("settings", "Settings", ft.Icons.SETTINGS_OUTLINED, ft.Icons.SETTINGS),
         ("reports", "Reports", ft.Icons.BAR_CHART_OUTLINED, ft.Icons.BAR_CHART),
@@ -44,10 +46,10 @@ ROLE_NAV = {
 
 
 class WaterStationApp:
-    """Orchestrates the Splash -> Login -> Dashboard flow.
-
-    The role is NEVER chosen manually: it's attached to the User object
-    returned by AuthService.authenticate() and drives which nav/pages appear.
+    """Orchestrates the Splash -> Auth -> Dashboard flow.
+    
+    Data is NOT loaded until after successful authentication.
+    AppState.refresh() is called only after the user logs in.
     """
 
     def __init__(self, page: ft.Page):
@@ -58,7 +60,7 @@ class WaterStationApp:
         self.current_page_name: str | None = None
         self.page_controllers: dict = {}
 
-        # ---- Realtime sync lifecycle ------------------------------------
+        # Realtime sync lifecycle
         self._realtime_stop_event = threading.Event()
         self._realtime_checker_thread: threading.Thread | None = None
         self._last_realtime_refresh = 0.0
@@ -66,15 +68,14 @@ class WaterStationApp:
 
         theme.DARK_MODE = True
         self._configure_page()
+        # Do NOT call services.state.refresh() here — it will crash
+        # because no user is authenticated yet. Data loads after login.
         self.services.state.on_change(self._handle_remote_change)
         self._show_splash()
 
-    # =====================================================================
-    # PAGE / THEME SETUP
-    # =====================================================================
     def _configure_page(self):
         theme.DARK_MODE = self.dark_mode
-        self.page.title = "AquaFlow"
+        self.page.title = "Water Pilot"
         self.page.theme_mode = ft.ThemeMode.DARK if self.dark_mode else ft.ThemeMode.LIGHT
         self.page.theme = ft.Theme(color_scheme_seed=ft.Colors.CYAN)
         self.page.dark_theme = ft.Theme(color_scheme_seed=ft.Colors.CYAN)
@@ -89,9 +90,6 @@ class WaterStationApp:
         self.page.bgcolor = theme.BG_BOTTOM if self.dark_mode else theme.LIGHT_BG_BOTTOM
         self.page.decoration = ft.BoxDecoration(gradient=theme.background_gradient(self.dark_mode))
 
-    # =====================================================================
-    # SAFE AREA HELPERS
-    # =====================================================================
     def _safe_top(self) -> int:
         return max(20, getattr(self.page, "window_top_safe_area_height", 0) or 0)
 
@@ -99,25 +97,68 @@ class WaterStationApp:
         return getattr(self.page, "window_bottom_safe_area_height", 0) or 0
 
     # =====================================================================
-    # STAGE 1: SPLASH
+    # STAGE 1: SPLASH — checks for saved session silently
     # =====================================================================
     def _show_splash(self):
         self.page.navigation_bar = None
         self.page.controls.clear()
-        self.page.add(build_splash(self.page, on_finish=self._show_login))
+        self.page.add(build_splash(
+            self.page, self.services,
+            on_authenticated=self._on_authenticated_from_splash,
+            on_unauthenticated=self._show_login,
+        ))
         self.page.update()
 
+    def _on_authenticated_from_splash(self, user: User):
+        """Called if a valid session was found during splash.
+        Now safe to load data because user is authenticated."""
+        self.user = user
+        self.services.state.repo.set_business_id(user.business_id)
+        self.services.state.refresh()
+        self.page_controllers = {}
+        self.current_page_name = ROLE_NAV[user.role][0][0]
+        self._show_shell()
+
     # =====================================================================
-    # STAGE 2: LOGIN
+    # STAGE 2: AUTH FLOW
     # =====================================================================
     def _show_login(self):
         self.page.navigation_bar = None
         self.page.controls.clear()
-        self.page.add(build_login(self.page, self.services, on_login_success=self._on_login_success))
+        self.page.add(build_login(
+            self.page, self.services,
+            on_login_success=self._on_login_success,
+            on_create_account=self._show_create_account,
+            on_forgot_password=self._show_forgot_password,
+        ))
+        self.page.update()
+
+    def _show_create_account(self):
+        self.page.navigation_bar = None
+        self.page.controls.clear()
+        self.page.add(build_create_account(
+            self.page, self.services,
+            on_account_created=self._on_login_success,
+            on_back_to_login=self._show_login,
+        ))
+        self.page.update()
+
+    def _show_forgot_password(self):
+        self.page.navigation_bar = None
+        self.page.controls.clear()
+        self.page.add(build_forgot_password(
+            self.page, self.services,
+            on_back_to_login=self._show_login,
+            on_reset_sent=self._show_login,
+        ))
         self.page.update()
 
     def _on_login_success(self, user: User):
+        """Called after successful login or account creation.
+        This is where we FIRST load business data."""
         self.user = user
+        self.services.state.repo.set_business_id(user.business_id)
+        self.services.state.refresh()
         self.page_controllers = {}
         tabs = ROLE_NAV[user.role]
         self.current_page_name = tabs[0][0]
@@ -133,8 +174,6 @@ class WaterStationApp:
         self.page.update()
 
     def _handle_remote_change(self):
-        """Called whenever the repository detects a remote write (another
-        device's sale, expense, payment, business day open/close...)."""
         if self.user and getattr(self, "body_container", None):
             if self.user.role == Role.WORKER and not self.services.business_day.is_open():
                 self._show_business_day_gate()
@@ -143,11 +182,12 @@ class WaterStationApp:
 
     def _logout(self):
         self._stop_realtime_checker()
+        self.services.auth.sign_out()
         self.user = None
         self._show_login()
 
     # =====================================================================
-    # STAGE 3: MAIN SHELL (header + body + bottom nav)
+    # STAGE 3: MAIN SHELL
     # =====================================================================
     def _show_shell(self):
         safe_top = self._safe_top()
@@ -172,12 +212,20 @@ class WaterStationApp:
         self.page.add(ft.SafeArea(self.root_column))
         self.page.navigation_bar = self._build_bottom_nav(safe_bottom)
         self.page.update()
-
-        # Start the realtime checker once the shell is visible.
         self._start_realtime_checker()
 
     def _build_header(self, safe_top: int) -> ft.Container:
         is_dark = self.dark_mode
+        user = self.user
+        hour = datetime.now().hour
+        if hour < 12:
+            greeting_prefix = "Good Morning"
+        elif hour < 17:
+            greeting_prefix = "Good Afternoon"
+        else:
+            greeting_prefix = "Good Evening"
+        greeting_text = f"{greeting_prefix}, {user.first_name}"
+
         logo_badge = ft.Container(
             content=ft.Icon(ft.Icons.WATER_DROP, color=ft.Colors.BLACK, size=22),
             width=42, height=42, border_radius=12, alignment=ft.Alignment.CENTER,
@@ -201,41 +249,26 @@ class WaterStationApp:
             ),
         )
         top_bar = ft.Row(
-            controls=[
-                logo_badge,
-                ft.Container(content=app_title, expand=True, alignment=ft.Alignment(-0.15, 0)),
-                account_icon,
-            ],
+            controls=[logo_badge, ft.Container(content=app_title, expand=True, alignment=ft.Alignment(-0.15, 0)), account_icon],
             spacing=theme.SPACING_XS, vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        greeting = ft.Text(
-            f"Hi, {self.user.name.split(' ')[0]}",
-            size=13, color=theme.TEXT_MID if is_dark else theme.LIGHT_TEXT_SECONDARY,
-            weight=ft.FontWeight.W_500,
-        )
+        role_label = user.role.value.title()
+        greeting = ft.Text(greeting_text, size=13, color=theme.TEXT_MID if is_dark else theme.LIGHT_TEXT_SECONDARY, weight=ft.FontWeight.W_500)
         role_badge = ft.Container(
-            content=ft.Text(self.user.role.value.title(), size=11,
-                            weight=ft.FontWeight.W_700, color=ft.Colors.BLACK),
-            bgcolor=theme.ACCENT,
-            padding=ft.Padding(theme.SPACING_SM, theme.SPACING_XXS, theme.SPACING_SM, theme.SPACING_XXS),
+            content=ft.Text(role_label, size=11, weight=ft.FontWeight.W_700, color=ft.Colors.BLACK),
+            bgcolor=theme.ACCENT, padding=ft.Padding(theme.SPACING_SM, theme.SPACING_XXS, theme.SPACING_SM, theme.SPACING_XXS),
             border_radius=12,
         )
         self.theme_icon_button = ft.IconButton(
             icon=ft.Icons.LIGHT_MODE_OUTLINED if is_dark else ft.Icons.DARK_MODE_OUTLINED,
             icon_color=theme.GOLD if is_dark else theme.LIGHT_TEXT_SECONDARY,
             tooltip="Toggle theme", on_click=lambda e: self._toggle_theme(),
-            style=ft.ButtonStyle(
-                bgcolor=theme.SURFACE if is_dark else ft.Colors.with_opacity(0.06, theme.LIGHT_TEXT_PRIMARY),
-                shape=ft.RoundedRectangleBorder(radius=12),
-            ),
+            style=ft.ButtonStyle(bgcolor=theme.SURFACE if is_dark else ft.Colors.with_opacity(0.06, theme.LIGHT_TEXT_PRIMARY), shape=ft.RoundedRectangleBorder(radius=12)),
         )
         logout_button = ft.IconButton(
             icon=ft.Icons.LOGOUT, icon_color=theme.TEXT_DIM if is_dark else theme.LIGHT_TEXT_DIM,
             tooltip="Log out", on_click=lambda e: self._logout(),
-            style=ft.ButtonStyle(
-                bgcolor=theme.SURFACE if is_dark else ft.Colors.with_opacity(0.06, theme.LIGHT_TEXT_PRIMARY),
-                shape=ft.RoundedRectangleBorder(radius=12),
-            ),
+            style=ft.ButtonStyle(bgcolor=theme.SURFACE if is_dark else ft.Colors.with_opacity(0.06, theme.LIGHT_TEXT_PRIMARY), shape=ft.RoundedRectangleBorder(radius=12)),
         )
         bottom_bar = ft.Row(
             controls=[
@@ -245,24 +278,13 @@ class WaterStationApp:
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        header_bgcolor = (
-            ft.Colors.with_opacity(0.55, theme.BG_TOP) if is_dark else theme.LIGHT_HEADER_BG
-        )
+        header_bgcolor = ft.Colors.with_opacity(0.55, theme.BG_TOP) if is_dark else theme.LIGHT_HEADER_BG
         return ft.Container(
-            content=ft.Column(
-                controls=[
-                    ft.Container(height=safe_top), top_bar,
-                    ft.Container(height=theme.SPACING_XS), bottom_bar,
-                ], spacing=0,
-            ),
+            content=ft.Column(controls=[ft.Container(height=safe_top), top_bar, ft.Container(height=theme.SPACING_XS), bottom_bar], spacing=0),
             padding=ft.Padding(theme.HEADER_PADDING_H, 0, theme.HEADER_PADDING_H, theme.SPACING_SM),
             bgcolor=header_bgcolor,
             border=ft.Border(bottom=ft.BorderSide(1, theme.SURFACE_BORDER if is_dark else theme.LIGHT_SURFACE_BORDER)),
-            shadow=ft.BoxShadow(
-                blur_radius=18,
-                color=ft.Colors.with_opacity(0.25, ft.Colors.BLACK) if is_dark else theme.LIGHT_CARD_SHADOW,
-                offset=ft.Offset(0, 4),
-            ),
+            shadow=ft.BoxShadow(blur_radius=18, color=ft.Colors.with_opacity(0.25, ft.Colors.BLACK) if is_dark else theme.LIGHT_CARD_SHADOW, offset=ft.Offset(0, 4)),
         )
 
     def _build_bottom_nav(self, safe_bottom: int) -> ft.NavigationBar:
@@ -271,13 +293,9 @@ class WaterStationApp:
         active_idx = [t[0] for t in tabs].index(self.current_page_name)
         return ft.NavigationBar(
             selected_index=active_idx,
-            destinations=[
-                ft.NavigationBarDestination(icon=icon, selected_icon=sel_icon, label=label)
-                for (_, label, icon, sel_icon) in tabs
-            ],
+            destinations=[ft.NavigationBarDestination(icon=icon, selected_icon=sel_icon, label=label) for (_, label, icon, sel_icon) in tabs],
             on_change=self._on_nav_change,
-            bgcolor=ft.Colors.with_opacity(0.9, theme.BG_TOP) if is_dark
-                    else ft.Colors.with_opacity(0.98, theme.LIGHT_HEADER_BG),
+            bgcolor=ft.Colors.with_opacity(0.9, theme.BG_TOP) if is_dark else ft.Colors.with_opacity(0.98, theme.LIGHT_HEADER_BG),
             indicator_color=theme.ACCENT_SOFT, elevation=12,
         )
 
@@ -307,9 +325,6 @@ class WaterStationApp:
         self._apply_background()
         self._show_shell()
 
-    # =====================================================================
-    # PAGE CONTROLLER FACTORY
-    # =====================================================================
     def _get_controller(self, page_name: str):
         if page_name in self.page_controllers:
             return self.page_controllers[page_name]
@@ -336,18 +351,12 @@ class WaterStationApp:
         controller = self._get_controller(page_name)
         return page_content(controls=controller.build())
 
-    # =====================================================================
-    # REALTIME SYNC — cross-device data push
-    # =====================================================================
     def _start_realtime_checker(self):
-        """Start the background thread that polls for Supabase Realtime
-        changes and marshals refreshes back to the main Flet thread."""
         if self._realtime_checker_thread and self._realtime_checker_thread.is_alive():
             return
         self._realtime_stop_event.clear()
         self._realtime_checker_thread = threading.Thread(
-            target=self._realtime_checker_loop,
-            name="realtime-checker", daemon=True,
+            target=self._realtime_checker_loop, name="realtime-checker", daemon=True,
         )
         self._realtime_checker_thread.start()
 
@@ -357,16 +366,10 @@ class WaterStationApp:
             self._realtime_checker_thread.join(timeout=3)
 
     def _realtime_checker_loop(self):
-        """Background thread: polls for realtime changes and periodic
-        fallback refreshes. Schedules work on the main Flet thread via
-        page.run_async() to avoid touching the UI from this thread."""
         page = self.page
-
         while not self._realtime_stop_event.is_set():
             now = time.monotonic()
             should_refresh = False
-
-            # --- Check 1: Supabase Realtime pending flag ----------------
             try:
                 repo = self.services.state.repo
                 if repo.check_realtime_pending():
@@ -375,15 +378,10 @@ class WaterStationApp:
                         repo.clear_realtime_pending()
                         should_refresh = True
             except AttributeError:
-                # MemoryRepository doesn't have realtime methods — that's fine.
                 pass
-
-            # --- Check 2: Periodic polling fallback ---------------------
             if not should_refresh and now - self._last_polling_refresh >= POLLING_FALLBACK_INTERVAL:
                 self._last_polling_refresh = now
                 should_refresh = True
-
-            # --- Marshal the refresh to the main thread ----------------
             if should_refresh:
                 async def _do_refresh():
                     if not self.user or not getattr(self, "body_container", None):
@@ -393,11 +391,8 @@ class WaterStationApp:
                         self._handle_remote_change()
                     except Exception:
                         pass
-
                 try:
                     asyncio.run_coroutine_threadsafe(_do_refresh(), page.loop)
                 except RuntimeError:
-                    # page.loop might not be available yet — skip this cycle.
                     pass
-
             self._realtime_stop_event.wait(timeout=REALTIME_POLL_INTERVAL)

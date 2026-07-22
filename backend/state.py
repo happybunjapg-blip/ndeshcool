@@ -1,14 +1,8 @@
-"""AppState is a local cache in front of whichever Repository is configured
-(MemoryRepository for dev, SupabaseRepository for production). Every method
-and attribute that existed before (products, customers, transactions,
-daily_expenses, capital_expenses, timeline, water_readings, get_product,
-get_customer, next_transaction_id, log_timeline, calculate_period_metrics,
-period_dates, trend_str) is preserved exactly -- no service or page had to
-change when this file was rewired to a real backend. That's the point of
-having a Repository seam: only this file needed to know persistence changed.
+"""AppState is a local cache in front of whichever Repository is configured.
 
-New in this revision: Business Day tracking, and a `refresh()` + `subscribe`
-hook so Supabase realtime pushes can update every connected device's cache.
+Data is NOT loaded on construction. Instead refresh() is called explicitly
+after authentication succeeds. This avoids crashing on the splash/login
+screen when no user is authenticated yet.
 """
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -22,45 +16,38 @@ class AppState:
     def __init__(self, repository: Repository):
         self.repo = repository
         self._on_change = None
-        self.refresh()
+        # Data is NOT loaded here. Call refresh() after authentication.
+        self.products: List[Product] = []
+        self.customers: List[Customer] = []
+        self.transactions: List[Transaction] = []
+        self.daily_expenses: List[dict] = []
+        self.capital_expenses: List[dict] = []
+        self.timeline: List[dict] = []
+        self.water_readings: List[dict] = []
+        self.business_days: List[BusinessDay] = []
+
+        # Subscribe to realtime — this doesn't query, just listens
         self.repo.subscribe(self._handle_remote_change)
 
     # ---------------------------------------------------------------
-    # Cache refresh -- called on startup and whenever a realtime push
-    # arrives, so every device converges on the same data.
+    # Cache refresh — call AFTER authentication succeeds
     # ---------------------------------------------------------------
     def refresh(self):
-        self.products: List[Product] = self.repo.list_products()
-        self.customers: List[Customer] = self.repo.list_customers()
-        self.transactions: List[Transaction] = self.repo.list_transactions()
-        self.daily_expenses: List[dict] = self.repo.list_daily_expenses()
-        self.capital_expenses: List[dict] = self.repo.list_capital_expenses()
-        self.timeline: List[dict] = self.repo.list_timeline()
-        self.water_readings: List[dict] = self.repo.list_water_readings()
-        self.business_days: List[BusinessDay] = self.repo.list_business_days()
+        """Load all data from the repository. Must only be called after
+        authentication is complete and business_id is set on the repo."""
+        self.products = self.repo.list_products()
+        self.customers = self.repo.list_customers()
+        self.transactions = self.repo.list_transactions()
+        self.daily_expenses = self.repo.list_daily_expenses()
+        self.capital_expenses = self.repo.list_capital_expenses()
+        self.timeline = self.repo.list_timeline()
+        self.water_readings = self.repo.list_water_readings()
+        self.business_days = self.repo.list_business_days()
 
     def on_change(self, callback):
-        """app.py registers a callback here (e.g. re-render the current
-        page) so remote writes from other devices show up automatically."""
         self._on_change = callback
 
     def notify_change(self):
-        """Call this after any local mutation (sale, expense, stock update)
-        so the UI re-renders immediately without waiting for a remote push
-        or a manual page navigation.
-
-        PERFORMANCE FIX: this used to call self.refresh(), which re-fetches
-        all 8 tables (products+batches, customers, transactions, daily
-        expenses, capital expenses, timeline, water readings, business days)
-        from Supabase -- roughly 9 sequential network round-trips -- on
-        EVERY single sale, expense, or stock change. That's what made a
-        single sale take several seconds (up to ~20s on a slow connection).
-        It's unnecessary: every caller (SalesService, InventoryService, etc.)
-        already mutates self.state's in-memory lists directly *before*
-        calling notify_change(), so the local cache is already correct.
-        We only need to refresh from the network when a change comes from
-        somewhere else (another device) -- that's what
-        `_handle_remote_change` is for."""
         if self._on_change:
             self._on_change()
 
@@ -135,7 +122,7 @@ class AppState:
         return day
 
     # ---------------------------------------------------------------
-    # Period metrics (used by dashboard/reports)
+    # Period metrics
     # ---------------------------------------------------------------
     @staticmethod
     def period_length_days(period: str) -> int:
@@ -146,20 +133,6 @@ class AppState:
         start = end - timedelta(days=self.period_length_days(period) - 1)
         return start, end
 
-    # ---------------------------------------------------------------
-    # Calendar-accurate period boundaries.
-    #
-    # BUG FIX: `period_dates()` above treats "monthly" as a rolling window
-    # of a fixed 30 days (PERIOD_LENGTHS["monthly"] = 30). That means a
-    # "monthly" report never actually lines up with a real calendar month
-    # -- e.g. a report generated on Feb 28 would start on Jan 29, not Feb 1,
-    # and a 31-day month like March would be short-changed by a day. The
-    # methods below compute the *real* calendar day / week / month that
-    # contains a given reference date, so "this month" always means
-    # "the 1st through the last day of this actual month" (28/29/30/31
-    # days, whatever the month actually has), and weeks always run
-    # Monday -> Sunday.
-    # ---------------------------------------------------------------
     @staticmethod
     def day_bounds(ref: Optional[date] = None) -> Tuple[date, date]:
         ref = ref or date.today()
@@ -167,16 +140,13 @@ class AppState:
 
     @staticmethod
     def week_bounds(ref: Optional[date] = None) -> Tuple[date, date]:
-        """Monday -> Sunday calendar week containing `ref`."""
         ref = ref or date.today()
-        start = ref - timedelta(days=ref.weekday())  # Monday
-        end = start + timedelta(days=6)               # Sunday
+        start = ref - timedelta(days=ref.weekday())
+        end = start + timedelta(days=6)
         return start, end
 
     @staticmethod
     def month_bounds(ref: Optional[date] = None) -> Tuple[date, date]:
-        """1st -> last day (28/29/30/31, whatever that month actually has)
-        of the calendar month containing `ref`."""
         ref = ref or date.today()
         start = ref.replace(day=1)
         if start.month == 12:
@@ -187,9 +157,6 @@ class AppState:
         return start, end
 
     def calendar_period_dates(self, period: str, ref: Optional[date] = None) -> Tuple[date, date]:
-        """Calendar-accurate equivalent of period_dates(): 'daily' -> the
-        single day, 'weekly' -> Mon-Sun week, 'monthly' -> the full
-        calendar month, all containing `ref` (defaults to today)."""
         if period == "weekly":
             return self.week_bounds(ref)
         if period == "monthly":
@@ -197,9 +164,6 @@ class AppState:
         return self.day_bounds(ref)
 
     def detail_in_range(self, start: date, end: date) -> Dict:
-        """Line-item detail for a period: every transaction and every
-        expense that happened, so a daily report can show exactly what
-        occurred (sales, payments, expenses) rather than only totals."""
         tx_in_range = [
             t for t in self.transactions
             if start <= datetime.strptime(t.date, "%Y-%m-%d").date() <= end
@@ -212,7 +176,6 @@ class AppState:
             e for e in self.capital_expenses
             if start <= datetime.strptime(e["date"], "%Y-%m-%d").date() <= end
         ]
-        # Newest first so the most recent activity shows up first.
         tx_in_range.sort(key=lambda t: (t.date, t.time), reverse=True)
         return {
             "transactions": tx_in_range,

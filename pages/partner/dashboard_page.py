@@ -14,8 +14,9 @@ class PartnerDashboardPage:
 
     def _close_day(self, e):
         try:
+            email = self.user.email if self.user and hasattr(self.user, 'email') else "owner"
             self.services.business_day.close_day(
-                self.user.email if self.user else "partner", "Closed remotely by partner",
+                email, "Closed remotely by owner",
             )
         except BusinessDayError as err:
             show_snack(self.page, str(err), theme.DANGER)

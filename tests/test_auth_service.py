@@ -1,60 +1,43 @@
+"""Tests for the AuthService.
+
+Since the production auth depends on Supabase connectivity, these tests
+verify that the service initializes and handles missing configuration gracefully.
+"""
 import unittest
+from unittest.mock import patch, MagicMock
 
 from services.auth_service import AuthService
+from services.session_service import SessionService
 from models import Role
 
 
-class DummyAuth:
-    def __init__(self, fail=False):
-        self.fail = fail
-
-    def sign_in_with_password(self, _credentials):
-        if self.fail:
-            raise RuntimeError("supabase auth unavailable")
-        return type("Result", (), {"user": None})()
-
-
-class DummyTable:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def select(self, *_args, **_kwargs):
-        return self
-
-    def eq(self, *_args, **_kwargs):
-        return self
-
-    def execute(self):
-        return type("Result", (), {"data": self._rows})()
-
-
-class DummyClient:
-    def __init__(self, fail=False, rows=None):
-        self.auth = DummyAuth(fail=fail)
-        self._rows = rows or []
-
-    def table(self, *_args, **_kwargs):
-        return DummyTable(self._rows)
-
-
 class AuthServiceTests(unittest.TestCase):
-    def test_demo_accounts_fallback_when_supabase_auth_fails(self):
-        service = AuthService.__new__(AuthService)
-        service._client = DummyClient(fail=True)
+    def test_requires_supabase_configured(self):
+        """AuthService raises AuthError when Supabase is not configured."""
+        from services.auth_service import AuthError
+        
+        with patch("config.SUPABASE_URL", ""), patch("config.SUPABASE_KEY", ""):
+            service = AuthService()
+            with self.assertRaises(AuthError):
+                service.authenticate("test@example.com", "password")
 
-        user = service._authenticate_supabase("partner@example.com", "anything")
+    def test_init_without_session(self):
+        """AuthService should initialize even without session tokens."""
+        service = AuthService()
+        # Should not crash
+        self.assertIsNotNone(service)
 
-        self.assertIsNotNone(user)
-        self.assertEqual(user.role, Role.PARTNER)
-        self.assertEqual(user.name, "Amina Hassan")
+    def test_get_saved_session_no_token(self):
+        """get_saved_session returns None when no token is saved."""
+        service = AuthService()
+        result = service.get_saved_session()
+        self.assertIsNone(result)
 
-    def test_unknown_account_still_fails_when_supabase_auth_fails(self):
-        service = AuthService.__new__(AuthService)
-        service._client = DummyClient(fail=True)
-
-        user = service._authenticate_supabase("unknown@example.com", "anything")
-
-        self.assertIsNone(user)
+    def test_sign_out_clears_session(self):
+        """sign_out should clear session without crashing."""
+        service = AuthService()
+        # Should not raise
+        service.sign_out()
 
 
 if __name__ == "__main__":

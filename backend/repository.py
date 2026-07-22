@@ -12,6 +12,24 @@ from models import Product, Customer, Transaction, BusinessDay
 
 
 class Repository(ABC):
+    """Repository interface for data persistence.
+    
+    All backends must implement these methods.
+    The `business_id` property is set by the app when a user logs in,
+    so all queries are scoped to the authenticated user's business.
+    """
+    
+    def __init__(self):
+        self._business_id: Optional[str] = None
+
+    def set_business_id(self, business_id: str) -> None:
+        """Set the business_id for scoping all queries."""
+        self._business_id = business_id
+
+    def get_business_id(self) -> Optional[str]:
+        """Get the current business_id."""
+        return self._business_id
+
     # ---- Products / inventory -------------------------------------
     @abstractmethod
     def list_products(self) -> List[Product]: ...

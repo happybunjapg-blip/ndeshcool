@@ -14,9 +14,13 @@ try:
 except ImportError:
     pass  # python-dotenv is optional; env vars can be set by the OS/host instead
 
-BACKEND = os.getenv("BACKEND", "supabase").strip().lower()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
+BACKEND = os.getenv("BACKEND", "supabase").strip().lower()
+
+# Fall back to memory if Supabase is not configured
+if BACKEND == "supabase" and (not SUPABASE_URL or not SUPABASE_KEY):
+    BACKEND = "memory"
 
 
 def build_repository():

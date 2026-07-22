@@ -15,7 +15,7 @@ def build_business_day_gate(page: ft.Page, services: Services, user, on_opened) 
 
     def _open(e):
         try:
-            services.business_day.open_day(user.email, note_field.value or "")
+            services.business_day.open_day(user.email if hasattr(user, 'email') else user.id, note_field.value or "")
         except BusinessDayError as err:
             show_snack(page, str(err), theme.DANGER)
             return

@@ -1,20 +1,33 @@
+"""Professional login page with Supabase Auth.
+
+No demo accounts. Only email + password + remember me + forgot password.
+"""
 import flet as ft
 import theme
-from widgets import primary_button
+from widgets import primary_button, show_snack
 from services import Services
+from services.auth_service import AuthError
 
 
-def build_login(page: ft.Page, services: Services, on_login_success) -> ft.Container:
+def build_login(page: ft.Page, services: Services, on_login_success,
+                on_create_account, on_forgot_password) -> ft.Container:
+    """Build the sign-in page.
+    
+    Args:
+        on_login_success: Called with the authenticated User on success.
+        on_create_account: Called when user taps "Create Account".
+        on_forgot_password: Called when user taps "Forgot Password".
+    """
     error_text = ft.Text("", size=12, color=theme.DANGER, visible=False)
-    email_value = ""
-    password_value = ""
+    loading = ft.ProgressRing(width=20, height=20, stroke_width=2, color=theme.ACCENT, visible=False)
 
     email_field = ft.TextField(
         label="Email",
-        hint_text="partner@example.com or worker@example.com",
+        hint_text="Enter your email address",
         prefix_icon=ft.Icons.EMAIL_OUTLINED,
         border_radius=theme.RADIUS_INPUT,
         keyboard_type=ft.KeyboardType.EMAIL,
+        autofocus=True,
     )
     password_field = ft.TextField(
         label="Password",
@@ -25,42 +38,45 @@ def build_login(page: ft.Page, services: Services, on_login_success) -> ft.Conta
     )
     remember_me = ft.Checkbox(label="Remember me", value=True, active_color=theme.ACCENT)
 
-    def _sync_values(_e=None):
-        nonlocal email_value, password_value
-        email_value = email_field.value or ""
-        password_value = password_field.value or ""
+    def _do_login(e):
+        email = (email_field.value or "").strip()
+        password = (password_field.value or "").strip()
 
-    def _complete_login(email: str, password: str):
-        nonlocal email_value, password_value
-        email_value = email
-        password_value = password
-        email_field.value = email
-        password_field.value = password
-        error_text.visible = False
-        user = services.auth.authenticate(email, password)
-        if not user:
-            error_text.value = "Invalid email or password. Try partner@example.com / worker@example.com."
+        if not email or not password:
+            error_text.value = "Please enter your email and password."
             error_text.visible = True
+            loading.visible = False
             page.update()
             return
-        on_login_success(user)
 
-    def _do_login(e):
-        _sync_values(e)
-        _complete_login(email_value, password_value)
-
-    def _use_demo_login(e, email: str):
-        _complete_login(email, "anything")
-
-    email_field.on_change = lambda e: _sync_values(e)
-    password_field.on_change = lambda e: _sync_values(e)
-
-    def _forgot_password(e):
-        error_text.value = "Password reset isn't available yet in this preview build."
-        error_text.color = theme.WARNING
-        error_text.visible = True
+        error_text.visible = False
+        loading.visible = True
         page.update()
 
+        try:
+            user = services.auth.authenticate(email, password, remember_me=remember_me.value)
+            loading.visible = False
+            page.update()
+            if user:
+                on_login_success(user)
+                return
+        except AuthError as err:
+            error_text.value = str(err)
+            error_text.visible = True
+        except Exception:
+            error_text.value = "Something went wrong. Please check your connection."
+            error_text.visible = True
+        
+        loading.visible = False
+        page.update()
+
+    def _handle_forgot_password(e):
+        on_forgot_password()
+
+    def _handle_create_account(e):
+        on_create_account()
+
+    # Logo
     logo_badge = ft.Container(
         content=ft.Icon(ft.Icons.WATER_DROP, color=ft.Colors.BLACK, size=30),
         width=64, height=64,
@@ -87,7 +103,7 @@ def build_login(page: ft.Page, services: Services, on_login_success) -> ft.Conta
                         remember_me,
                         ft.TextButton(
                             "Forgot password?",
-                            on_click=_forgot_password,
+                            on_click=_handle_forgot_password,
                             style=ft.ButtonStyle(color=theme.ACCENT),
                         ),
                     ],
@@ -95,17 +111,19 @@ def build_login(page: ft.Page, services: Services, on_login_success) -> ft.Conta
                 ),
                 error_text,
                 primary_button("Sign In", ft.Icons.LOGIN, _do_login, width=float("inf")),
+                ft.Container(content=loading, alignment=ft.Alignment.CENTER),
+                ft.Container(height=8),
                 ft.Row(
                     [
-                        ft.TextButton("Demo Partner", on_click=lambda e: _use_demo_login(e, "partner@example.com")),
-                        ft.TextButton("Demo Worker", on_click=lambda e: _use_demo_login(e, "worker@example.com")),
+                        ft.Text("Don't have an account?", size=12, color=theme.TEXT_DIM),
+                        ft.TextButton(
+                            "Create one",
+                            on_click=_handle_create_account,
+                            style=ft.ButtonStyle(color=theme.ACCENT),
+                        ),
                     ],
                     alignment=ft.MainAxisAlignment.CENTER,
-                ),
-                ft.Container(height=4),
-                ft.Text(
-                    "Demo accounts: partner@example.com / worker@example.com (any password)",
-                    size=11, color=theme.TEXT_DIM, text_align=ft.TextAlign.CENTER,
+                    spacing=4,
                 ),
             ],
             spacing=14,
@@ -118,7 +136,6 @@ def build_login(page: ft.Page, services: Services, on_login_success) -> ft.Conta
             colors=[ft.Colors.with_opacity(0.07, ft.Colors.WHITE), ft.Colors.with_opacity(0.02, ft.Colors.WHITE)],
         ),
         border=ft.Border.all(1, theme.SURFACE_BORDER),
-        # Responsive: use expand=True with constrained max width instead of fixed 360px
         expand=True,
     )
 

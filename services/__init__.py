@@ -1,5 +1,6 @@
 from backend.state import AppState
 import config
+from .session_service import SessionService
 from .auth_service import AuthService
 from .inventory_service import InventoryService
 from .sales_service import SalesService, SalesError
@@ -20,7 +21,8 @@ class Services:
     def __init__(self):
         repository = config.build_repository()
         self.state = AppState(repository)
-        self.auth = AuthService()
+        self.session = SessionService()
+        self.auth = AuthService(session_service=self.session)
         self.inventory = InventoryService(self.state)
         self.sales = SalesService(self.state, self.inventory)
         self.customers = CustomerService(self.state)
@@ -29,4 +31,5 @@ class Services:
 
 
 __all__ = ["Services", "AuthService", "InventoryService", "SalesService", "SalesError",
-           "CustomerService", "AnalyticsService", "BusinessDayService", "BusinessDayError"]
+           "CustomerService", "AnalyticsService", "BusinessDayService", "BusinessDayError",
+           "SessionService"]

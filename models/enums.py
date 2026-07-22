@@ -7,17 +7,17 @@ from enum import Enum
 
 
 class Role(str, Enum):
+    OWNER = "owner"
     WORKER = "worker"
-    PARTNER = "partner"
 
 
 class ProductCategory(str, Enum):
     """How a stock item behaves in inventory rules.
 
     BOTTLE_WATER -> a bottle sold already filled with water (e.g. "20L Bottles").
-                     Selling one reduces bottle stock AND counts as water sold.
+                      Selling one reduces bottle stock AND counts as water sold.
     ACCESSORY    -> a pure product with no water component (caps, taps, pumps).
-                     Selling one only reduces its own stock.
+                      Selling one only reduces its own stock.
     """
     BOTTLE_WATER = "bottle_water"
     ACCESSORY = "accessory"

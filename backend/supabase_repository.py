@@ -38,6 +38,7 @@ REALTIME_TABLES = [
 
 class SupabaseRepository(Repository):
     def __init__(self, url: str, key: str):
+        super().__init__()
         if create_client is None:
             raise RuntimeError(
                 "The `supabase` package isn't installed. Run: pip install supabase"
@@ -91,9 +92,20 @@ class SupabaseRepository(Repository):
             closing_note=row.get("closing_note", ""),
         )
 
+    def _apply_business_filter(self, query):
+        """Append business_id filter to a query if set."""
+        if self._business_id:
+            return query.eq("business_id", self._business_id)
+        return query
+
+    def _safe_select(self, table: str):
+        """Create a select query scoped to the current business."""
+        query = self.client.table(table).select("*")
+        return self._apply_business_filter(query)
+
     def _safe_execute(self, table_name: str, operation: str):
         try:
-            return self.client.table(table_name).select("*").execute().data
+            return self._safe_select(table_name).execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return []
@@ -101,7 +113,8 @@ class SupabaseRepository(Repository):
 
     def _safe_execute_single(self, table_name: str, name: str, field: str):
         try:
-            return self.client.table(table_name).select("*").eq(field, name).execute().data
+            query = self.client.table(table_name).select("*").eq(field, name)
+            return self._apply_business_filter(query).execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return []
@@ -118,8 +131,12 @@ class SupabaseRepository(Repository):
     # ---- Products ----------------------------------------------------
     def list_products(self) -> List[Product]:
         try:
-            products = self.client.table("products").select("*").execute().data
-            batches = self.client.table("product_batches").select("*").order("id").execute().data
+            query = self._safe_select("products")
+            products = query.execute().data
+            batch_query = self.client.table("product_batches").select("*").order("id")
+            if self._business_id:
+                batch_query = batch_query.eq("business_id", self._business_id)
+            batches = batch_query.execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return []
@@ -132,11 +149,17 @@ class SupabaseRepository(Repository):
 
     def get_product(self, name: str) -> Optional[Product]:
         try:
-            rows = self.client.table("products").select("*").eq("name", name).execute().data
+            query = self.client.table("products").select("*").eq("name", name)
+            if self._business_id:
+                query = query.eq("business_id", self._business_id)
+            rows = query.execute().data
             if not rows:
                 return None
-            batches = self.client.table("product_batches").select("*").eq(
-                "product_name", name).order("id").execute().data
+            batch_query = self.client.table("product_batches").select("*").eq(
+                "product_name", name).order("id")
+            if self._business_id:
+                batch_query = batch_query.eq("business_id", self._business_id)
+            batches = batch_query.execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return None
@@ -144,22 +167,26 @@ class SupabaseRepository(Repository):
         return self._row_to_product(rows[0], batches)
 
     def save_product(self, product: Product) -> None:
-        self._safe_execute_operation(self.client.table("products").update({
+        update_data = {
             "qty": product.qty, "threshold": product.threshold,
             "selling_price": product.selling_price,
             "buying_price": product.buying_price, "updated_at": datetime.now().isoformat(),
-        }).eq("name", product.name))
+        }
+        query = self.client.table("products").update(update_data).eq("name", product.name)
+        if self._business_id:
+            query = query.eq("business_id", self._business_id)
+        self._safe_execute_operation(query)
+
         # Batches are the source of truth for FIFO -- rewrite them wholesale.
-        # PERFORMANCE FIX: this used to fire one network round-trip per batch
-        # (delete + N separate inserts), which is why a single sale could
-        # take many seconds once a product had accumulated several batches.
-        # A single bulk insert cuts every sale down to 2 network calls total,
-        # regardless of how many batches the product has.
-        self._safe_execute_operation(self.client.table("product_batches").delete().eq("product_name", product.name))
+        delete_query = self.client.table("product_batches").delete().eq("product_name", product.name)
+        if self._business_id:
+            delete_query = delete_query.eq("business_id", self._business_id)
+        self._safe_execute_operation(delete_query)
         if product.batches:
             self._safe_execute_operation(self.client.table("product_batches").insert([
                 {
-                    "product_name": product.name, "qty": b.qty,
+                    "product_name": product.name, "business_id": self._business_id or "",
+                    "qty": b.qty,
                     "purchase_price": b.purchase_price, "purchase_date": b.date,
                 }
                 for b in product.batches
@@ -168,7 +195,8 @@ class SupabaseRepository(Repository):
     # ---- Customers (credit customers only) ------------------------------
     def list_customers(self) -> List[Customer]:
         try:
-            rows = self.client.table("customers").select("*").execute().data
+            query = self._safe_select("customers")
+            rows = query.execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return []
@@ -177,7 +205,10 @@ class SupabaseRepository(Repository):
 
     def get_customer(self, customer_id: str) -> Optional[Customer]:
         try:
-            rows = self.client.table("customers").select("*").eq("id", customer_id).execute().data
+            query = self.client.table("customers").select("*").eq("id", customer_id)
+            if self._business_id:
+                query = query.eq("business_id", self._business_id)
+            rows = query.execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return None
@@ -185,21 +216,26 @@ class SupabaseRepository(Repository):
         return self._row_to_customer(rows[0]) if rows else None
 
     def save_customer(self, customer: Customer) -> None:
-        self._safe_execute_operation(self.client.table("customers").update({
+        query = self.client.table("customers").update({
             "balance": customer.balance, "is_credit": customer.is_credit,
             "notes": customer.notes, "last_purchase": customer.last_purchase,
-        }).eq("id", customer.id))
+        }).eq("id", customer.id)
+        if self._business_id:
+            query = query.eq("business_id", self._business_id)
+        self._safe_execute_operation(query)
 
     def add_customer(self, customer: Customer) -> None:
         self._safe_execute_operation(self.client.table("customers").insert({
             "id": customer.id, "name": customer.name, "phone": customer.phone,
-            "is_credit": customer.is_credit, "balance": customer.balance, "notes": customer.notes,
+            "is_credit": customer.is_credit, "balance": customer.balance,
+            "notes": customer.notes, "business_id": self._business_id or "",
         }))
 
     # ---- Transactions ----------------------------------------------------
     def list_transactions(self) -> List[Transaction]:
         try:
-            rows = self.client.table("transactions").select("*").execute().data
+            query = self._safe_select("transactions")
+            rows = query.execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return []
@@ -212,18 +248,20 @@ class SupabaseRepository(Repository):
             "time": transaction.time, "amount": transaction.amount, "profit": transaction.profit,
             "customer_id": transaction.customer_id, "details": transaction.details,
             "created_by": transaction.customer_id or "system",
+            "business_id": self._business_id or "",
         }))
 
     def next_transaction_id(self) -> str:
-        # Postgres identity columns would be cleaner; kept as a readable id
-        # scheme (T00001, T00002...) to match the in-memory backend's format.
         count = self.client.table("transactions").select("id", count="exact").execute().count or 0
         return f"T{count + 1:05d}"
 
     # ---- Expenses -----------------------------------------------------
     def list_daily_expenses(self) -> List[Dict[str, Any]]:
         try:
-            rows = self.client.table("expenses").select("*").eq("is_capital", False).execute().data
+            query = self.client.table("expenses").select("*").eq("is_capital", False)
+            if self._business_id:
+                query = query.eq("business_id", self._business_id)
+            rows = query.execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return []
@@ -231,11 +269,16 @@ class SupabaseRepository(Repository):
         return rows
 
     def add_daily_expense(self, record: Dict[str, Any]) -> None:
-        self._safe_execute_operation(self.client.table("expenses").insert({**record, "is_capital": False}))
+        self._safe_execute_operation(self.client.table("expenses").insert({
+            **record, "is_capital": False, "business_id": self._business_id or "",
+        }))
 
     def list_capital_expenses(self) -> List[Dict[str, Any]]:
         try:
-            rows = self.client.table("expenses").select("*").eq("is_capital", True).execute().data
+            query = self.client.table("expenses").select("*").eq("is_capital", True)
+            if self._business_id:
+                query = query.eq("business_id", self._business_id)
+            rows = query.execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return []
@@ -243,39 +286,52 @@ class SupabaseRepository(Repository):
         return rows
 
     def add_capital_expense(self, record: Dict[str, Any]) -> None:
-        self._safe_execute_operation(self.client.table("expenses").insert({**record, "is_capital": True}))
+        self._safe_execute_operation(self.client.table("expenses").insert({
+            **record, "is_capital": True, "business_id": self._business_id or "",
+        }))
 
     # ---- Timeline -----------------------------------------------------
     def list_timeline(self) -> List[Dict[str, Any]]:
         try:
-            return self.client.table("timeline_events").select("*").execute().data
+            query = self._safe_select("timeline_events")
+            return query.execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return []
             raise
 
     def add_timeline_event(self, record: Dict[str, Any]) -> None:
-        self._safe_execute_operation(self.client.table("timeline_events").insert(record))
+        self._safe_execute_operation(self.client.table("timeline_events").insert({
+            **record, "business_id": self._business_id or "",
+        }))
 
     # ---- Water readings -------------------------------------------------
     def list_water_readings(self) -> List[Dict[str, Any]]:
         try:
-            return self.client.table("water_readings").select("*").execute().data
+            query = self._safe_select("water_readings")
+            return query.execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return []
             raise
 
     def add_water_reading(self, record: Dict[str, Any]) -> None:
-        self._safe_execute_operation(self.client.table("water_readings").upsert(record))
+        self._safe_execute_operation(self.client.table("water_readings").upsert({
+            **record, "business_id": self._business_id or "",
+        }))
 
     def upsert_today_water_reading(self, record: Dict[str, Any]) -> None:
-        self._safe_execute_operation(self.client.table("water_readings").upsert(record))
+        self._safe_execute_operation(self.client.table("water_readings").upsert({
+            **record, "business_id": self._business_id or "",
+        }))
 
     # ---- Business Day ----------------------------------------------------
     def get_open_business_day(self) -> Optional[BusinessDay]:
         try:
-            rows = self.client.table("business_days").select("*").eq("status", "OPEN").execute().data
+            query = self.client.table("business_days").select("*").eq("status", "OPEN")
+            if self._business_id:
+                query = query.eq("business_id", self._business_id)
+            rows = query.execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return None
@@ -284,7 +340,10 @@ class SupabaseRepository(Repository):
 
     def list_business_days(self) -> List[BusinessDay]:
         try:
-            rows = self.client.table("business_days").select("*").order("opened_at", desc=True).execute().data
+            query = self.client.table("business_days").select("*").order("opened_at", desc=True)
+            if self._business_id:
+                query = query.eq("business_id", self._business_id)
+            rows = query.execute().data
         except APIError as exc:
             if exc.code == "PGRST205":
                 return []
@@ -292,21 +351,22 @@ class SupabaseRepository(Repository):
         return [self._row_to_business_day(r) for r in rows]
 
     def open_business_day(self, business_day: BusinessDay) -> None:
-        # The partial unique index in supabase_schema.sql (one row with
-        # status='OPEN') makes this safe even if two workers tap "Open" at
-        # the same instant on different devices -- the second insert fails.
         self._safe_execute_operation(self.client.table("business_days").insert({
             "id": business_day.id, "opened_at": business_day.opened_at,
             "opened_by": business_day.opened_by, "status": business_day.status,
             "opening_note": business_day.opening_note,
+            "business_id": self._business_id or "",
         }))
 
     def close_business_day(self, business_day_id: str, closed_at: str,
                             closed_by: str, closing_note: str) -> None:
-        self._safe_execute_operation(self.client.table("business_days").update({
+        query = self.client.table("business_days").update({
             "status": "CLOSED", "closed_at": closed_at,
             "closed_by": closed_by, "closing_note": closing_note,
-        }).eq("id", business_day_id))
+        }).eq("id", business_day_id)
+        if self._business_id:
+            query = query.eq("business_id", self._business_id)
+        self._safe_execute_operation(query)
 
     # =====================================================================
     # REALTIME — cross-device sync via Supabase Realtime
@@ -373,16 +433,11 @@ class SupabaseRepository(Repository):
 
         while not self._stop_event.is_set():
             try:
-                # Create a *separate* async client for the realtime channel
-                # (the sync client in self.client can't subscribe).
                 async_client = create_client(self._url, self._key, is_async=True)
                 channels = []
 
                 def make_handler(table_name: str):
-                    """Closure to capture the table name per channel."""
                     def _on_change(payload):
-                        # Called from the realtime library's internal thread.
-                        # We only signal the flag — no UI work here.
                         self._last_realtime_ts = time.monotonic()
                         self._realtime_pending.set()
                     return _on_change
@@ -390,7 +445,7 @@ class SupabaseRepository(Repository):
                 for table in REALTIME_TABLES:
                     channel = async_client.channel(f"table-{table}")
                     channel.on_postgres_changes(
-                        "*",                     # listen to INSERT, UPDATE, DELETE
+                        "*",
                         schema="public",
                         table=table,
                         callback=make_handler(table),
@@ -398,23 +453,19 @@ class SupabaseRepository(Repository):
                     await channel.subscribe()
                     channels.append(channel)
 
-                # Connected successfully — reset backoff
                 delay = RECONNECT_BASE_DELAY
 
-                # Keep alive until we're asked to stop
                 while not self._stop_event.is_set():
                     await asyncio.sleep(1)
 
-                # Clean unsubscribe
                 for ch in channels:
                     try:
                         await ch.unsubscribe()
                     except Exception:
                         pass
-                break  # Normal exit
+                break
 
             except Exception:
-                # Connection or subscription failed — wait and retry
                 if self._stop_event.is_set():
                     break
                 await asyncio.sleep(delay)
