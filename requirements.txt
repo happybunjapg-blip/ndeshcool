@@ -2,6 +2,10 @@ flet==0.85.3
 python-dotenv==1.2.2
 requests
 httpx
-qrcode
+qrcode[pil]
 supabase[realtime]>=2.0
 websockets>=12.0
+opencv-python-headless
+pyzbar
+Pillow
+numpy

@@ -409,6 +409,104 @@ class AuthService:
                     role=Role.OWNER, business_id=business_id)
 
     # ----------------------------------------------------------------
+    # QR-BASED SIGNUP (WaterPilot redesign)
+    # ----------------------------------------------------------------
+    def sign_up_via_qr(self, qr_data: dict, first_name: str, last_name: str,
+                       email: str, password: str) -> User:
+        """Create account from decoded QR invitation payload.
+        
+        qr_data must contain:
+          - code: the 6-digit invitation code
+          - type: "worker" or "owner"
+          - business_id: the business UUID
+        
+        The invitation is validated, then the user is created with the
+        role determined by the QR type (not guessed).
+        """
+        if not self._client:
+            raise AuthError("Registration is not configured.")
+        
+        code = (qr_data.get("code") or "").strip()
+        inv_type = (qr_data.get("type") or "").strip().lower()
+        business_id = (qr_data.get("business_id") or "").strip()
+        
+        if not code or inv_type not in ("worker", "owner") or not business_id:
+            raise AuthError("Invalid invitation QR. Please scan again.")
+        
+        email = (email or "").strip().lower()
+        password = (password or "").strip()
+        first_name = (first_name or "").strip()
+        last_name = (last_name or "").strip()
+        
+        if not first_name or not last_name:
+            raise AuthError("First and last name are required.")
+        if not email:
+            raise AuthError("Email is required.")
+        if not password or len(password) < 6:
+            raise AuthError("Password must be at least 6 characters.")
+        
+        # Validate the invitation code
+        invitation = self.validate_invitation(code, require_owner=(inv_type == "owner"))
+        
+        if invitation.business_id != business_id:
+            raise AuthError("Invitation does not match this business.")
+        
+        self._log(f"QR signup: type={inv_type}, code={code}, business_id={business_id}")
+        
+        # Create the auth user
+        try:
+            result = self._client.auth.sign_up({
+                "email": email, "password": password,
+                "options": {"data": {"first_name": first_name, "last_name": last_name}},
+            })
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "already registered" in msg:
+                raise AuthError("An account with this email already exists.")
+            raise AuthError(f"Registration failed: {exc}")
+        
+        user_id = self._extract_user_id(result)
+        if not user_id:
+            raise AuthError("Registration failed.")
+        
+        has_session = hasattr(result, 'session') and result.session is not None
+        identity_verified = has_session
+        
+        role_str = "owner" if inv_type == "owner" else "worker"
+        
+        try:
+            if identity_verified:
+                self._create_profile(user_id, email, first_name, last_name, role_str, business_id)
+                self._client.table("invitations").update({
+                    "is_invalidated": True,
+                }).eq("code", code).execute()
+                self._save_session_tokens(result)
+                self._log(f"{role_str.title()} account fully created via QR")
+            else:
+                # Pre-create profile for when they confirm email
+                self._client.table("profiles").insert({
+                    "id": user_id, "email": email,
+                    "first_name": first_name, "last_name": last_name,
+                    "phone": "", "role": role_str, "business_id": business_id,
+                }).execute()
+                self._client.table("invitations").update({
+                    "is_invalidated": True,
+                }).eq("code", code).execute()
+                raise AuthError(
+                    "Account created! Please check your email to confirm your account, "
+                    "then sign in."
+                )
+        except AuthError:
+            raise
+        except Exception as exc:
+            self._log_exc(f"QR account setup failed: {exc}")
+            raise AuthError(f"Account setup failed: {exc}")
+        
+        role_enum = Role.OWNER if inv_type == "owner" else Role.WORKER
+        return User(id=user_id, email=email, first_name=first_name, last_name=last_name,
+                    role=role_enum, business_id=business_id)
+
+    # ----------------------------------------------------------------
     # DATABASE HELPERS
     # ----------------------------------------------------------------
     def _create_owner_business(self, business_name: str, owner_id: str) -> str:

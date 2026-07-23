@@ -13,7 +13,7 @@ from services import Services
 
 
 def build_splash(page: ft.Page, services: Services, on_authenticated, on_unauthenticated,
-                 delay_seconds: float = 1.4) -> ft.Container:
+                 delay_seconds: float = 1.5) -> ft.Container:
     """A branded splash screen that checks for an existing session.
     
     Args:
@@ -21,27 +21,27 @@ def build_splash(page: ft.Page, services: Services, on_authenticated, on_unauthe
         on_authenticated: Callback with User if session is valid.
         on_unauthenticated: Callback if no session exists.
     """
+    NAVY_BG = "#0B2545"
+
     status_text = ft.Text("", size=11, color=theme.TEXT_DIM, visible=False)
 
     logo_badge = ft.Container(
-        content=ft.Icon(ft.Icons.WATER_DROP, color=ft.Colors.BLACK, size=44),
-        width=96, height=96,
-        border_radius=28,
+        content=ft.Text("WP", size=36, weight=ft.FontWeight.BOLD, color=NAVY_BG),
+        width=112, height=112,
+        border_radius=56,
         alignment=ft.Alignment.CENTER,
-        gradient=ft.LinearGradient(
-            begin=ft.Alignment.TOP_LEFT, end=ft.Alignment.BOTTOM_RIGHT,
-            colors=[theme.ACCENT, ft.Colors.BLUE_400],
-        ),
-        shadow=ft.BoxShadow(blur_radius=30, color=theme.ACCENT_SOFT, offset=ft.Offset(0, 8)),
+        bgcolor=ft.Colors.WHITE,
+        shadow=ft.BoxShadow(blur_radius=30, color=ft.Colors.with_opacity(0.25, ft.Colors.BLACK), offset=ft.Offset(0, 8)),
     )
 
     content_column = ft.Column(
         [
             logo_badge,
-            ft.Text("AquaFlow", size=28, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-            ft.Text("Water Station Ops", size=13, color=theme.TEXT_DIM),
+            ft.Container(height=8),
+            ft.Text("WaterPilot", size=28, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+            ft.Text("Navigate Your Water Business", size=13, color=theme.TEXT_DIM),
             ft.Container(height=24),
-            ft.ProgressRing(width=22, height=22, stroke_width=2.5, color=theme.ACCENT),
+            ft.ProgressRing(width=20, height=20, stroke_width=2.5, color=theme.ACCENT),
             status_text,
         ],
         alignment=ft.MainAxisAlignment.CENTER,
@@ -49,7 +49,29 @@ def build_splash(page: ft.Page, services: Services, on_authenticated, on_unauthe
         spacing=14,
     )
 
+    footer_text = ft.Text("Powered by ArcNova", size=11, color=theme.TEXT_DIM)
+
+    root = ft.Container(
+        content=ft.Stack(
+            [
+                ft.Container(content=content_column, alignment=ft.Alignment.CENTER, expand=True),
+                ft.Container(content=footer_text, alignment=ft.Alignment.CENTER, bottom=24, left=0, right=0),
+            ],
+            expand=True,
+        ),
+        bgcolor=NAVY_BG,
+        alignment=ft.Alignment.CENTER,
+        expand=True,
+        opacity=0,
+        animate_opacity=ft.Animation(400, ft.AnimationCurve.EASE_OUT),
+    )
+
     async def _advance():
+        # Trigger fade-in shortly after mount.
+        await asyncio.sleep(0.05)
+        root.opacity = 1
+        page.update()
+
         await asyncio.sleep(delay_seconds)
 
         # Check for existing session
@@ -69,8 +91,4 @@ def build_splash(page: ft.Page, services: Services, on_authenticated, on_unauthe
 
     page.run_task(_advance)
 
-    return ft.Container(
-        content=content_column,
-        alignment=ft.Alignment.CENTER,
-        expand=True,
-    )
+    return root

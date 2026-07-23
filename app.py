@@ -10,6 +10,8 @@ from services import Services
 from pages.splash_page import build_splash
 from pages.login_page import build_login
 from pages.create_account_page import build_create_account
+from pages.qr_scanner_page import build_qr_scanner
+from pages.join_registration_page import build_join_registration
 from pages.forgot_password_page import build_forgot_password
 from pages.worker.business_day_page import build_business_day_gate
 from pages.worker.home_page import WorkerHomePage
@@ -140,6 +142,35 @@ class WaterStationApp:
             self.page, self.services,
             on_account_created=self._on_login_success,
             on_back_to_login=self._show_login,
+            on_join_business=self._show_qr_scanner,
+        ))
+        self.page.update()
+
+    def _show_qr_scanner(self):
+        """Navigate to QR scanner page."""
+        self.page.navigation_bar = None
+        self.page.controls.clear()
+        self.page.add(build_qr_scanner(
+            self.page,
+            on_scan_success=self._on_qr_scanned,
+            on_back=self._show_create_account,
+            services=self.services,
+        ))
+        self.page.update()
+
+    def _on_qr_scanned(self, qr_data: dict):
+        """Called when a valid QR code is scanned."""
+        self._show_join_registration(qr_data)
+
+    def _show_join_registration(self, qr_data: dict):
+        """Show registration form after successful QR scan."""
+        self.page.navigation_bar = None
+        self.page.controls.clear()
+        self.page.add(build_join_registration(
+            self.page, self.services,
+            qr_data=qr_data,
+            on_account_created=self._on_login_success,
+            on_back_to_scanner=self._show_qr_scanner,
         ))
         self.page.update()
 

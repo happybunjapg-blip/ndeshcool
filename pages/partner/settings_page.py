@@ -90,17 +90,27 @@ class PartnerSettingsPage:
             invitation = self.services.auth.generate_invitation_code(
                 business_id, owner_invite=False
             )
-            self.invitation_code_display.value = invitation.code
-            self.invitation_code_display.visible = True
-            self.invitation_expiry_display.value = (
-                f"Worker code — expires: {invitation.expires_at[:19].replace('T', ' ')}"
-            )
-            self.invitation_expiry_display.visible = True
-            show_snack(self.page, f"Worker invitation: {invitation.code}")
+            self._show_worker_qr(invitation)
             self._refresh_invitations()
             self.page.update()
         except AuthError as err:
             show_snack(self.page, str(err), theme.DANGER)
+
+    def _show_worker_qr(self, invitation):
+        """Display worker QR code and code in the worker section."""
+        from services.qr_service import generate_invitation_qr_base64
+        import base64
+        b64 = generate_invitation_qr_base64(invitation.code, "worker", invitation.business_id)
+        self.worker_qr_image.src = f"data:image/png;base64,{b64}"
+        self.worker_qr_image.visible = True
+        self.worker_code_display.value = invitation.code
+        self.worker_code_display.visible = True
+        self.worker_expiry_display.value = (
+            f"Expires: {invitation.expires_at[:19].replace('T', ' ')}"
+        )
+        self.worker_expiry_display.visible = True
+        self.worker_qr_container.visible = True
+        show_snack(self.page, f"Worker invitation: {invitation.code}")
 
     def _generate_owner_invitation(self, e):
         business_id = self.services.state.repo.get_business_id()
@@ -119,17 +129,26 @@ class PartnerSettingsPage:
             invitation = self.services.auth.generate_invitation_code(
                 business_id, owner_invite=True
             )
-            self.invitation_code_display.value = invitation.code
-            self.invitation_code_display.visible = True
-            self.invitation_expiry_display.value = (
-                f"Co-owner code — expires: {invitation.expires_at[:19].replace('T', ' ')}"
-            )
-            self.invitation_expiry_display.visible = True
-            show_snack(self.page, f"Co-owner invitation: {invitation.code}")
+            self._show_owner_qr(invitation)
             self._refresh_invitations()
             self.page.update()
         except AuthError as err:
             show_snack(self.page, str(err), theme.DANGER)
+
+    def _show_owner_qr(self, invitation):
+        """Display owner QR code and code in the owner section."""
+        from services.qr_service import generate_invitation_qr_base64
+        b64 = generate_invitation_qr_base64(invitation.code, "owner", invitation.business_id)
+        self.owner_qr_image.src = f"data:image/png;base64,{b64}"
+        self.owner_qr_image.visible = True
+        self.owner_code_display.value = invitation.code
+        self.owner_code_display.visible = True
+        self.owner_expiry_display.value = (
+            f"Expires: {invitation.expires_at[:19].replace('T', ' ')}"
+        )
+        self.owner_expiry_display.visible = True
+        self.owner_qr_container.visible = True
+        show_snack(self.page, f"Co-owner invitation: {invitation.code}")
 
     def _revoke_invitation(self, code: str):
         try:
@@ -212,9 +231,89 @@ class PartnerSettingsPage:
 
         self.invitations_list.controls = rows
 
+    # ---- QR display widgets (lazy-init) --------------------------------
+
+    def _init_qr_widgets(self):
+        """Initialize QR display widgets if not already done."""
+        if hasattr(self, '_qr_initialized') and self._qr_initialized:
+            return
+        
+        # Worker QR section
+        self.worker_qr_image = ft.Image(
+            src="", width=200, height=200, fit="contain",
+            visible=False,
+        )
+        self.worker_code_display = ft.Text("", size=20, weight=ft.FontWeight.W_700,
+                                            color=theme.ACCENT, selectable=True, visible=False)
+        self.worker_expiry_display = ft.Text("", size=11, color=theme.TEXT_DIM, visible=False)
+        
+        self.worker_qr_container = ft.Container(
+            content=ft.Column([
+                ft.Container(content=self.worker_qr_image, alignment=ft.Alignment.CENTER),
+                ft.Container(height=4),
+                ft.Text("Code:", size=11, color=theme.TEXT_DIM),
+                ft.Row([
+                    self.worker_code_display,
+                    ft.IconButton(
+                        icon=ft.Icons.CONTENT_COPY,
+                        icon_color=theme.TEXT_MID, tooltip="Copy code",
+                        on_click=lambda e: self._copy_code(self.worker_code_display.value),
+                        width=32, height=32,
+                    ),
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=4),
+                self.worker_expiry_display,
+            ], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.Padding(12, 8, 12, 8),
+            border_radius=12,
+            bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE),
+            visible=False,
+        )
+        
+        # Owner QR section
+        self.owner_qr_image = ft.Image(
+            src="", width=200, height=200, fit="contain",
+            visible=False,
+        )
+        self.owner_code_display = ft.Text("", size=20, weight=ft.FontWeight.W_700,
+                                           color=theme.GOLD, selectable=True, visible=False)
+        self.owner_expiry_display = ft.Text("", size=11, color=theme.TEXT_DIM, visible=False)
+        
+        self.owner_qr_container = ft.Container(
+            content=ft.Column([
+                ft.Container(content=self.owner_qr_image, alignment=ft.Alignment.CENTER),
+                ft.Container(height=4),
+                ft.Text("Code:", size=11, color=theme.TEXT_DIM),
+                ft.Row([
+                    self.owner_code_display,
+                    ft.IconButton(
+                        icon=ft.Icons.CONTENT_COPY,
+                        icon_color=theme.TEXT_MID, tooltip="Copy code",
+                        on_click=lambda e: self._copy_code(self.owner_code_display.value),
+                        width=32, height=32,
+                    ),
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=4),
+                self.owner_expiry_display,
+            ], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.Padding(12, 8, 12, 8),
+            border_radius=12,
+            bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE),
+            visible=False,
+        )
+        
+        self._qr_initialized = True
+
+    def _copy_code(self, code: str):
+        try:
+            self.page.set_clipboard(code)
+            show_snack(self.page, "Code copied to clipboard")
+        except Exception:
+            show_snack(self.page, f"Code: {code}", theme.ACCENT)
+
     # ---- Build ---------------------------------------------------------
 
     def build(self) -> list:
+        self._init_qr_widgets()
+        
         products = self.services.inventory.all_products()
         self._refresh_product_dd()
         self._refresh_invitations()
@@ -270,25 +369,40 @@ class PartnerSettingsPage:
                 )
 
         return [
-            # ── Invite Workers ──────────────────────────────────
-            section_title("Manage Workers", ft.Icons.PEOPLE_OUTLINE),
+            # ── Invite Worker (separate section) ─────────────────
+            section_title("Invite Worker", ft.Icons.PEOPLE_OUTLINE),
             glass_card(
                 ft.Column([
-                    ft.Text("Generate a 6-digit invitation code for a new worker.",
+                    ft.Text("Generate a QR code to invite a new worker.",
                             size=13, color=theme.TEXT_DIM),
                     ft.Container(height=4),
-                    primary_button("Generate Worker Code", ft.Icons.PERSON_ADD_OUTLINED,
+                    primary_button("Generate Worker QR", ft.Icons.QR_CODE,
                                    self._generate_worker_invitation, bgcolor=theme.ACCENT, width=float("inf")),
-                    ft.Container(height=8),
-                    ft.Text("Invite a co-owner (max 2 owners per business).",
+                    self.worker_qr_container,
+                ], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=16, accent=theme.ACCENT,
+            ),
+
+            # ── Invite Co-owner (separate section) ──────────────
+            section_title("Invite Co-owner", ft.Icons.STAR_OUTLINE),
+            glass_card(
+                ft.Column([
+                    ft.Text("Generate a QR code to invite a co-owner (max 2 owners).",
                             size=13, color=theme.TEXT_DIM),
-                    primary_button("Generate Co-Owner Code", ft.Icons.STAR_OUTLINE,
+                    ft.Container(height=4),
+                    primary_button("Generate Co-owner QR", ft.Icons.QR_CODE,
                                    self._generate_owner_invitation, bgcolor=theme.GOLD, width=float("inf")),
-                    ft.Container(height=8),
-                    self.invitation_code_display,
-                    self.invitation_expiry_display,
-                    ft.Divider(height=1, color=theme.SURFACE_BORDER if theme.DARK_MODE else theme.LIGHT_SURFACE_BORDER),
-                    ft.Text("All Invitations", size=12, weight=ft.FontWeight.W_600, color=theme.text_secondary()),
+                    self.owner_qr_container,
+                ], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=16, accent=theme.GOLD,
+            ),
+            
+            # ── All Invitations List ────────────────────────────
+            section_title("All Invitations", ft.Icons.HISTORY),
+            glass_card(
+                ft.Column([
+                    ft.Text("History of all generated invitations.",
+                            size=13, color=theme.TEXT_DIM),
                     self.invitations_list,
                 ], spacing=8),
                 padding=16, accent=theme.ACCENT,
