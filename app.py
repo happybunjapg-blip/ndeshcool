@@ -62,6 +62,7 @@ class WaterStationApp:
         self.user: User | None = None
         self.current_page_name: str | None = None
         self.page_controllers: dict = {}
+        self._deep_link_handled = False  # prevent double-handling
 
         # Realtime sync lifecycle
         self._realtime_stop_event = threading.Event()
@@ -74,6 +75,11 @@ class WaterStationApp:
         # Do NOT call services.state.refresh() here — it will crash
         # because no user is authenticated yet. Data loads after login.
         self.services.state.on_change(self._handle_remote_change)
+
+        # Listen for route changes — Flet may set the deep-link URL
+        # asynchronously after the page is created.
+        self.page.on_route_change = self._on_route_change
+
         self._show_splash()
 
     def _configure_page(self):
@@ -112,9 +118,44 @@ class WaterStationApp:
         ))
         self.page.update()
 
+    def _on_route_change(self, e: ft.RouteChangeEvent):
+        """Called when Flet detects a route/URL change.
+        
+        This is a safety net: if the deep-link URL arrives asynchronously
+        (e.g. after the page is already rendered), we catch it here.
+        """
+        print(f"[DEEP_LINK] Route change event: {e.route}")
+        if not self._deep_link_handled:
+            self._try_handle_deep_link()
+
+    def _try_handle_deep_link(self) -> bool:
+        """Attempt to handle a deep link. Called at startup and on route change.
+        
+        Returns True if a deep link was handled and Join Registration was shown.
+        """
+        if self._deep_link_handled:
+            return False
+        url = getattr(self.page, "url", "") or ""
+        print(f"[DEEP_LINK] page.url = {url!r}")
+        if not url:
+            return False
+        qr_data = parse_deep_link(url)
+        if qr_data is None:
+            print(f"[DEEP_LINK] parse_deep_link returned None for url={url!r}")
+            return False
+        print(f"[DEEP_LINK] Valid deep link parsed: {qr_data}")
+        self._deep_link_handled = True
+        self._show_join_registration(qr_data)
+        return True
+
     def _on_authenticated_from_splash(self, user: User):
         """Called if a valid session was found during splash.
         Now safe to load data because user is authenticated."""
+        # Before navigating to the shell, check if this was a deep-link launch.
+        # If so, the invitation flow takes priority over normal navigation.
+        if self._try_handle_deep_link():
+            return
+
         self.user = user
         self.services.state.repo.set_business_id(user.business_id)
         self.services.state.refresh()
@@ -126,6 +167,11 @@ class WaterStationApp:
     # STAGE 2: AUTH FLOW
     # =====================================================================
     def _show_login(self):
+        # If the app was launched via a deep link, skip the login page
+        # and go directly to Join Registration.
+        if self._try_handle_deep_link():
+            return
+
         self.page.navigation_bar = None
         self.page.controls.clear()
         self.page.add(build_login(
@@ -136,38 +182,13 @@ class WaterStationApp:
         ))
         self.page.update()
 
-    def _check_deep_link(self) -> bool:
-        """Check if the app was launched via a deep link URL.
-        
-        On Android, when the user scans a QR with the native camera,
-        Android launches WaterPilot with the deep link URL.
-        Flet exposes this URL via page.url.
-        
-        Returns:
-            True if a valid deep link was handled, False otherwise.
-        """
-        try:
-            url = getattr(self.page, "url", "") or ""
-            if not url:
-                return False
-            
-            qr_data = parse_deep_link(url)
-            if qr_data is None:
-                return False
-            
-            self._show_join_registration(qr_data)
-            return True
-        except Exception:
-            return False
-
     def _show_create_account(self):
+        # Check if the app was launched via a deep link (QR scan)
+        if self._try_handle_deep_link():
+            return
+
         self.page.navigation_bar = None
         self.page.controls.clear()
-        
-        # Check if the app was launched via a deep link (QR scan)
-        if self._check_deep_link():
-            return
-        
         self.page.add(build_create_account(
             self.page, self.services,
             on_account_created=self._on_login_success,
