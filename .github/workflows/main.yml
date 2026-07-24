@@ -26,7 +26,10 @@ jobs:
 
       - name: Build APK
         run: |
-          yes | flet build apk --clear-cache \
+         yes | flet build apk \
+            --clear-cache \
+            --deep-linking-scheme waterpilot \
+            --deep-linking-host join \
             --exclude .git \
             --exclude .venv \
             --exclude .github \
