@@ -74,7 +74,11 @@ def generate_invitation_qr_base64(code: str, invitation_type: str, business_id: 
 def parse_deep_link(url: str) -> Optional[dict]:
     """Parse a deep link URL into an invitation payload dict.
     
-    Expects format: waterpilot://join?code=XXX&type=worker&business_id=UUID
+    Accepts multiple formats:
+      - Full URL:   waterpilot://join?code=XXX&type=worker&business_id=UUID
+      - Route path: /join?code=XXX&type=worker&business_id=UUID
+      - Query only: join?code=XXX&type=worker&business_id=UUID
+      - Bare query: ?code=XXX&type=worker&business_id=UUID
     
     Returns:
         dict with keys: code, type, business_id, or None if invalid.
@@ -82,14 +86,24 @@ def parse_deep_link(url: str) -> Optional[dict]:
     if not url:
         return None
     
+    # Strip leading / for scheme detection
+    url = url.strip()
+    
     try:
         parsed = urlparse(url)
     except Exception:
         return None
     
-    # Validate scheme and host
-    if parsed.scheme != DEEP_LINK_SCHEME or parsed.hostname != DEEP_LINK_HOST:
-        return None
+    # Check if this is a full waterpilot://join URL
+    if parsed.scheme == DEEP_LINK_SCHEME:
+        if parsed.hostname != DEEP_LINK_HOST:
+            return None
+    else:
+        # For route-format URLs (/join?code=... or join?code=...),
+        # check that the path contains 'join'
+        path = parsed.path or ""
+        if not path.endswith("join") and path not in ("", "/"):
+            return None
     
     params = parse_qs(parsed.query, keep_blank_values=False)
     

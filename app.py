@@ -123,30 +123,63 @@ class WaterStationApp:
         
         This is a safety net: if the deep-link URL arrives asynchronously
         (e.g. after the page is already rendered), we catch it here.
+        The route from the event is passed as a hint to _try_handle_deep_link.
         """
         print(f"[DEEP_LINK] Route change event: {e.route}")
         if not self._deep_link_handled:
-            self._try_handle_deep_link()
+            self._try_handle_deep_link(route_hint=e.route)
 
-    def _try_handle_deep_link(self) -> bool:
+    def _try_handle_deep_link(self, route_hint: str = "") -> bool:
         """Attempt to handle a deep link. Called at startup and on route change.
+        
+        Checks both page.url and page.route (and optional route_hint from event).
+        On Android, the deep link URL from the intent may arrive via page.route
+        or the on_route_change event, NOT via page.url (which is the Flet server URL).
+        
+        Args:
+            route_hint: Optional route string from the on_route_change event.
         
         Returns True if a deep link was handled and Join Registration was shown.
         """
         if self._deep_link_handled:
             return False
-        url = getattr(self.page, "url", "") or ""
-        print(f"[DEEP_LINK] page.url = {url!r}")
-        if not url:
-            return False
-        qr_data = parse_deep_link(url)
-        if qr_data is None:
-            print(f"[DEEP_LINK] parse_deep_link returned None for url={url!r}")
-            return False
-        print(f"[DEEP_LINK] Valid deep link parsed: {qr_data}")
-        self._deep_link_handled = True
-        self._show_join_registration(qr_data)
-        return True
+        
+        # Collect all possible sources of the deep link URL
+        candidates = []
+        
+        # 1. Route from event (most reliable for async route changes)
+        if route_hint:
+            candidates.append(("event.route", route_hint))
+        
+        # 2. page.route (current route, may contain deep link path)
+        try:
+            page_route = getattr(self.page, "route", "") or ""
+            if page_route:
+                candidates.append(("page.route", page_route))
+        except Exception:
+            pass
+        
+        # 3. page.url (Flet server URL - less likely to have deep link but check anyway)
+        try:
+            page_url = getattr(self.page, "url", "") or ""
+            if page_url:
+                candidates.append(("page.url", page_url))
+        except Exception:
+            pass
+        
+        for source_name, candidate_url in candidates:
+            print(f"[DEEP_LINK] Checking {source_name} = {candidate_url!r}")
+            qr_data = parse_deep_link(candidate_url)
+            if qr_data is not None:
+                print(f"[DEEP_LINK] Valid deep link parsed from {source_name}: {qr_data}")
+                self._deep_link_handled = True
+                self._show_join_registration(qr_data)
+                return True
+            else:
+                print(f"[DEEP_LINK] parse_deep_link returned None for {source_name}={candidate_url!r}")
+        
+        print(f"[DEEP_LINK] No valid deep link found in any candidate source")
+        return False
 
     def _on_authenticated_from_splash(self, user: User):
         """Called if a valid session was found during splash.
