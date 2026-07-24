@@ -10,8 +10,9 @@ from services import Services
 from pages.splash_page import build_splash
 from pages.login_page import build_login
 from pages.create_account_page import build_create_account
-from pages.qr_scanner_page import build_qr_scanner
+from pages.qr_scanner_page import build_qr_scanner as build_qr_instructions
 from pages.join_registration_page import build_join_registration
+from services.qr_service import parse_deep_link
 from pages.forgot_password_page import build_forgot_password
 from pages.worker.business_day_page import build_business_day_gate
 from pages.worker.home_page import WorkerHomePage
@@ -135,9 +136,38 @@ class WaterStationApp:
         ))
         self.page.update()
 
+    def _check_deep_link(self) -> bool:
+        """Check if the app was launched via a deep link URL.
+        
+        On Android, when the user scans a QR with the native camera,
+        Android launches WaterPilot with the deep link URL.
+        Flet exposes this URL via page.url.
+        
+        Returns:
+            True if a valid deep link was handled, False otherwise.
+        """
+        try:
+            url = getattr(self.page, "url", "") or ""
+            if not url:
+                return False
+            
+            qr_data = parse_deep_link(url)
+            if qr_data is None:
+                return False
+            
+            self._show_join_registration(qr_data)
+            return True
+        except Exception:
+            return False
+
     def _show_create_account(self):
         self.page.navigation_bar = None
         self.page.controls.clear()
+        
+        # Check if the app was launched via a deep link (QR scan)
+        if self._check_deep_link():
+            return
+        
         self.page.add(build_create_account(
             self.page, self.services,
             on_account_created=self._on_login_success,
@@ -147,10 +177,15 @@ class WaterStationApp:
         self.page.update()
 
     def _show_qr_scanner(self):
-        """Navigate to QR scanner page."""
+        """Navigate to QR scanner instruction page.
+        
+        This shows instructions for using the phone's native camera.
+        The actual QR scanning is done by Android, which then launches
+        WaterPilot via deep link (waterpilot://join?...).
+        """
         self.page.navigation_bar = None
         self.page.controls.clear()
-        self.page.add(build_qr_scanner(
+        self.page.add(build_qr_instructions(
             self.page,
             on_scan_success=self._on_qr_scanned,
             on_back=self._show_create_account,

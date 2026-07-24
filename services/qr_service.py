@@ -1,30 +1,46 @@
-"""QR Code generation and scanning service for WaterPilot invitations.
+"""QR Code generation and deep link parsing for WaterPilot invitations.
 
 Provides:
-- generate_invitation_qr(invitation) -> PIL Image containing QR with JSON payload
-- decode_qr_image(image) -> dict | None (decoded payload)
+- generate_invitation_qr(invitation) -> PIL Image containing QR with deep link URL
+- generate_invitation_qr_base64(invitation) -> base64 PNG string
+- parse_deep_link(url) -> dict | None (decoded invitation payload from URL)
 
-The QR payload format:
-{
-  "code": "483921",
-  "type": "worker",       # "worker" | "owner"
-  "business_id": "uuid..."
-}
+The QR payload is a deep link URL:
+  waterpilot://join?code=483921&type=worker&business_id=uuid...
+
+Android Camera recognizes the QR → launches WaterPilot → URL is parsed.
 """
-import json
 from typing import Optional
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import qrcode
 from PIL import Image
 import io
 import base64
 
 
+DEEP_LINK_SCHEME = "waterpilot"
+DEEP_LINK_HOST = "join"
+
+
 class QRDecodeError(Exception):
     pass
 
 
+def _build_deep_link(code: str, invitation_type: str, business_id: str) -> str:
+    """Build a deep link URL for the invitation.
+    
+    Format: waterpilot://join?code=XXX&type=worker&business_id=UUID
+    """
+    params = urlencode({
+        "code": code,
+        "type": invitation_type,
+        "business_id": business_id,
+    })
+    return urlunparse((DEEP_LINK_SCHEME, DEEP_LINK_HOST, "", "", params, ""))
+
+
 def generate_invitation_qr(code: str, invitation_type: str, business_id: str) -> Image.Image:
-    """Generate a QR code image containing the invitation payload as JSON.
+    """Generate a QR code image containing a deep link URL.
     
     Args:
         code: The 6-digit invitation code.
@@ -34,18 +50,14 @@ def generate_invitation_qr(code: str, invitation_type: str, business_id: str) ->
     Returns:
         PIL Image of the QR code.
     """
-    payload = json.dumps({
-        "code": code,
-        "type": invitation_type,
-        "business_id": business_id,
-    })
+    deep_link = _build_deep_link(code, invitation_type, business_id)
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_M,
         box_size=10,
         border=2,
     )
-    qr.add_data(payload)
+    qr.add_data(deep_link)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     return img
@@ -59,22 +71,67 @@ def generate_invitation_qr_base64(code: str, invitation_type: str, business_id: 
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
-def decode_qr_data(data: str) -> Optional[dict]:
-    """Decode a QR string (JSON payload) into a dict.
+def parse_deep_link(url: str) -> Optional[dict]:
+    """Parse a deep link URL into an invitation payload dict.
     
-    Expects valid JSON with keys: code, type, business_id.
+    Expects format: waterpilot://join?code=XXX&type=worker&business_id=UUID
+    
+    Returns:
+        dict with keys: code, type, business_id, or None if invalid.
+    """
+    if not url:
+        return None
+    
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return None
+    
+    # Validate scheme and host
+    if parsed.scheme != DEEP_LINK_SCHEME or parsed.hostname != DEEP_LINK_HOST:
+        return None
+    
+    params = parse_qs(parsed.query, keep_blank_values=False)
+    
+    code = (params.get("code", [""])[0]).strip()
+    inv_type = (params.get("type", [""])[0]).strip().lower()
+    business_id = (params.get("business_id", [""])[0]).strip()
+    
+    if not code or inv_type not in ("worker", "owner") or not business_id:
+        return None
+    
+    return {
+        "code": code,
+        "type": inv_type,
+        "business_id": business_id,
+    }
+
+
+# Keep decode_qr_data as an alias for backward compatibility
+# (it will also accept JSON payloads for transition period)
+def decode_qr_data(data: str) -> Optional[dict]:
+    """Decode QR string data. Accepts both deep link URLs and JSON payloads.
+    
+    First tries deep link parsing, falls back to JSON parsing.
     
     Returns:
         dict with parsed fields, or None if invalid.
     """
     if not data:
         return None
+    
+    # Try deep link parsing first
+    result = parse_deep_link(data.strip())
+    if result is not None:
+        return result
+    
+    # Fallback: try JSON parsing (for backward compatibility)
+    import json
     try:
         payload = json.loads(data.strip())
     except (json.JSONDecodeError, ValueError):
         return None
     
-    # Validate required fields
     code = payload.get("code", "").strip()
     inv_type = payload.get("type", "").strip().lower()
     business_id = payload.get("business_id", "").strip()

@@ -1,6 +1,28 @@
-﻿build/
+﻿# Build output
+build/
+
+# Virtual environments
 .venv/
+venv/
+env/
+S
+# Python cache
 __pycache__/
 *.pyc
+
+# Environment files
 .env
+
+# macOS
 ._*
+
+# Session
+.session
+
+# Test output
+test_output.txt
+test_out.txt
+
+# Patch / reject files
+*.patch
+*.rej
