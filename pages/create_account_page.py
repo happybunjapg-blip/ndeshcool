@@ -74,16 +74,16 @@ def build_create_account(page: ft.Page, services: Services,
         nonlocal showing_choice, showing_form
         showing_choice = False
         showing_form = True
-        choice_container.visible = False
-        form_container.visible = True
+        choice_card.visible = False
+        form_card.visible = True
         page.update()
     
     def _show_choice():
         nonlocal showing_choice, showing_form
         showing_choice = True
         showing_form = False
-        choice_container.visible = True
-        form_container.visible = False
+        choice_card.visible = True
+        form_card.visible = False
         error_text.visible = False
         page.update()
     
