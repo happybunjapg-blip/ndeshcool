@@ -13,13 +13,16 @@ from services import Services
 
 
 def build_splash(page: ft.Page, services: Services, on_authenticated, on_unauthenticated,
-                 delay_seconds: float = 1.5) -> ft.Container:
+                 delay_seconds: float = 1.5,
+                 check_deep_link=None, on_deep_link_found=None) -> ft.Container:
     """A branded splash screen that checks for an existing session.
 
     Args:
         services: Application services (for session check).
         on_authenticated: Callback with User if session is valid.
         on_unauthenticated: Callback if no session exists.
+        check_deep_link: Optional callable that returns qr_data dict or None.
+        on_deep_link_found: Optional callable(qr_data) if deep link detected.
     """
     NAVY_BG = "#0B2545"
     NAVY_DEEP = "#081B33"
@@ -161,6 +164,26 @@ def build_splash(page: ft.Page, services: Services, on_authenticated, on_unauthe
         await asyncio.sleep(0.3)
         loading_wrap.opacity = 1
         page.update()
+
+        # ----------------------------------------------------------------
+        # DEEP LINK CHECK — runs BEFORE session check.
+        # Android may deliver the launch URL asynchronously, so we wait
+        # a short time for page.route to be populated.
+        # ----------------------------------------------------------------
+        if check_deep_link is not None:
+            # Give Android a moment to deliver the launch URL
+            for _ in range(5):  # up to ~1.5s total wait
+                qr_data = check_deep_link()
+                if qr_data is not None:
+                    print(f"[SPLASH] Deep link detected during splash: {qr_data}")
+                    status_text.value = "Invitation detected! Redirecting..."
+                    status_text.visible = True
+                    page.update()
+                    await asyncio.sleep(0.3)
+                    if on_deep_link_found:
+                        on_deep_link_found(qr_data)
+                    return
+                await asyncio.sleep(0.3)
 
         # Stage 3: rotate through status messages. The real session check
         # runs once, during the first message — the authentication logic

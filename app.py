@@ -115,6 +115,8 @@ class WaterStationApp:
             self.page, self.services,
             on_authenticated=self._on_authenticated_from_splash,
             on_unauthenticated=self._show_login,
+            check_deep_link=self._check_deep_link_before_nav,
+            on_deep_link_found=self._on_deep_link_found,
         ))
         self.page.update()
 
@@ -154,6 +156,43 @@ class WaterStationApp:
             return True
         except Exception:
             return False
+
+    def _check_deep_link_before_nav(self):
+        """Check for a deep link URL and return parsed qr_data if valid.
+        
+        This is called from within the splash screen animation, giving
+        Android time to deliver the launch URL to page.route.
+        
+        Returns:
+            dict (qr_data) if a valid invitation deep link is present, else None.
+        """
+        try:
+            url = getattr(self.page, "route", "") or ""
+            print(f"[DEEP_LINK_BEFORE_NAV] page.route = {url!r}")
+            if not url:
+                print(f"[DEEP_LINK_BEFORE_NAV] No route yet — returning None")
+                return None
+            
+            qr_data = parse_deep_link(url)
+            if qr_data is None:
+                print(f"[DEEP_LINK_BEFORE_NAV] parse_deep_link returned None for route={url!r}")
+                return None
+            
+            print(f"[DEEP_LINK_BEFORE_NAV] Valid deep link parsed: {qr_data}")
+            print(f"[DEEP_LINK_BEFORE_NAV] code={qr_data.get('code')}, type={qr_data.get('type')}, business_id={qr_data.get('business_id')}")
+            return qr_data
+        except Exception as exc:
+            print(f"[DEEP_LINK_BEFORE_NAV] Exception: {exc}")
+            return None
+
+    def _on_deep_link_found(self, qr_data: dict):
+        """Called from splash when a deep link invitation is detected.
+        
+        This bypasses the normal session check and login flow entirely.
+        """
+        print(f"[DEEP_LINK_FOUND] Invitation detected: {qr_data}")
+        self._deep_link_handled = True
+        self._show_join_registration(qr_data)
 
     def _on_authenticated_from_splash(self, user: User):
         """Called if a valid session was found during splash.
