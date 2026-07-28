@@ -69,6 +69,8 @@ def build_join_registration(page: ft.Page, services: Services,
     )
     
     def _do_signup(e):
+        print(f"[JOIN_DEBUG] _do_signup called")
+        print(f"[JOIN_DEBUG] qr_data passed to handler: {qr_data!r}")
         try:
             error_text.visible = False
             loading.visible = True
@@ -79,6 +81,8 @@ def build_join_registration(page: ft.Page, services: Services,
             email = (email_field.value or "").strip()
             password = (password_field.value or "").strip()
             confirm = (confirm_password_field.value or "").strip()
+            
+            print(f"[JOIN_DEBUG] fields: first_name={first_name!r}, last_name={last_name!r}, email={email!r}")
             
             if not first_name or not last_name:
                 error_text.value = "First and last name are required."
@@ -105,6 +109,7 @@ def build_join_registration(page: ft.Page, services: Services,
                 page.update()
                 return
             
+            print(f"[JOIN_DEBUG] calling sign_up_via_qr with qr_data={qr_data!r}")
             user = services.auth.sign_up_via_qr(
                 qr_data=qr_data,
                 first_name=first_name,
@@ -117,10 +122,12 @@ def build_join_registration(page: ft.Page, services: Services,
             on_account_created(user)
             
         except AuthError as err:
+            print(f"[JOIN_DEBUG] AuthError caught: {err}")
             error_text.value = str(err)
             error_text.color = theme.DANGER
             error_text.visible = True
         except Exception as err:
+            print(f"[JOIN_DEBUG] Exception caught: {err}")
             error_text.value = "Something went wrong. Please check your connection."
             error_text.color = theme.DANGER
             error_text.visible = True

@@ -266,6 +266,7 @@ class WaterStationApp:
 
     def _show_join_registration(self, qr_data: dict):
         """Show registration form after successful QR scan."""
+        print(f"[APP_DEBUG] _show_join_registration called with qr_data={qr_data!r}")
         self.page.navigation_bar = None
         self.page.controls.clear()
         self.page.add(build_join_registration(

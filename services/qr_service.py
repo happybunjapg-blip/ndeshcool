@@ -36,7 +36,10 @@ def _build_deep_link(code: str, invitation_type: str, business_id: str) -> str:
         "type": invitation_type,
         "business_id": business_id,
     })
-    return urlunparse((DEEP_LINK_SCHEME, DEEP_LINK_HOST, "", "", params, ""))
+    url = urlunparse((DEEP_LINK_SCHEME, DEEP_LINK_HOST, "", "", params, ""))
+    print(f"[QR_DEBUG] _build_deep_link: code={code!r}, invitation_type={invitation_type!r}, business_id={business_id!r}")
+    print(f"[QR_DEBUG] _build_deep_link: final URL={url!r}")
+    return url
 
 
 def generate_invitation_qr(code: str, invitation_type: str, business_id: str) -> Image.Image:
@@ -84,41 +87,55 @@ def parse_deep_link(url: str) -> Optional[dict]:
         dict with keys: code, type, business_id, or None if invalid.
     """
     if not url:
+        print(f"[PARSE_DEBUG] parse_deep_link: url is empty, returning None")
         return None
     
     # Strip leading / for scheme detection
     url = url.strip()
+    print(f"[PARSE_DEBUG] parse_deep_link: raw URL={url!r}")
     
     try:
         parsed = urlparse(url)
-    except Exception:
+        print(f"[PARSE_DEBUG] urlparse result: scheme={parsed.scheme!r}, hostname={parsed.hostname!r}, path={parsed.path!r}, query={parsed.query!r}")
+    except Exception as exc:
+        print(f"[PARSE_DEBUG] urlparse exception: {exc}")
         return None
     
     # Check if this is a full waterpilot://join URL
     if parsed.scheme == DEEP_LINK_SCHEME:
         if parsed.hostname != DEEP_LINK_HOST:
+            print(f"[PARSE_DEBUG] scheme=waterpilot but hostname={parsed.hostname!r} != 'join', returning None")
             return None
+        print(f"[PARSE_DEBUG] scheme=waterpilot, hostname=join -> valid deep link format")
     else:
         # For route-format URLs (/join?code=... or join?code=...),
         # check that the path contains 'join'
         path = parsed.path or ""
         if not path.endswith("join") and path not in ("", "/"):
+            print(f"[PARSE_DEBUG] path={path!r} does not contain 'join', returning None")
             return None
+        print(f"[PARSE_DEBUG] non-waterpilot scheme, path={path!r} -> treating as route format")
     
     params = parse_qs(parsed.query, keep_blank_values=False)
+    print(f"[PARSE_DEBUG] parsed query params: {params}")
     
     code = (params.get("code", [""])[0]).strip()
     inv_type = (params.get("type", [""])[0]).strip().lower()
     business_id = (params.get("business_id", [""])[0]).strip()
     
+    print(f"[PARSE_DEBUG] extracted: code={code!r}, type={inv_type!r}, business_id={business_id!r}")
+    
     if not code or inv_type not in ("worker", "owner") or not business_id:
+        print(f"[PARSE_DEBUG] validation failed: code={code!r}, type={inv_type!r}, business_id={business_id!r}")
         return None
     
-    return {
+    result = {
         "code": code,
         "type": inv_type,
         "business_id": business_id,
     }
+    print(f"[PARSE_DEBUG] returning: {result}")
+    return result
 
 
 # Keep decode_qr_data as an alias for backward compatibility

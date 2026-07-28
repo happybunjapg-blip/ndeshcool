@@ -87,13 +87,19 @@ class PartnerSettingsPage:
             show_snack(self.page, "Business not configured.", theme.DANGER)
             return
         try:
+            print(f"[QR_GEN_DEBUG] === Generate Worker QR ===")
+            print(f"[QR_GEN_DEBUG] business_id={business_id!r}")
+            print(f"[QR_GEN_DEBUG] Calling generate_invitation_code(business_id, owner_invite=False)")
             invitation = self.services.auth.generate_invitation_code(
                 business_id, owner_invite=False
             )
+            print(f"[QR_GEN_DEBUG] generate_invitation_code returned: code={invitation.code!r}, business_id={invitation.business_id!r}")
+            print(f"[QR_GEN_DEBUG] Calling generate_invitation_qr_base64(code={invitation.code!r}, invitation_type='worker', business_id={invitation.business_id!r})")
             self._show_worker_qr(invitation)
             self._refresh_invitations()
             self.page.update()
         except AuthError as err:
+            print(f"[QR_GEN_DEBUG] Worker QR generation failed: {err}")
             show_snack(self.page, str(err), theme.DANGER)
 
     def _show_worker_qr(self, invitation):

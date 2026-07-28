@@ -445,8 +445,11 @@ class AuthService:
         if not password or len(password) < 6:
             raise AuthError("Password must be at least 6 characters.")
         
+        print(f"[AUTH_DEBUG] sign_up_via_qr: received qr_data -> code={code!r}, inv_type={inv_type!r}, business_id={business_id!r}")
+        require_owner = (inv_type == "owner")
+        print(f"[AUTH_DEBUG] sign_up_via_qr: calling validate_invitation(code={code!r}, require_owner={require_owner!r})")
         # Validate the invitation code
-        invitation = self.validate_invitation(code, require_owner=(inv_type == "owner"))
+        invitation = self.validate_invitation(code, require_owner=require_owner)
         
         if invitation.business_id != business_id:
             raise AuthError("Invitation does not match this business.")
@@ -547,19 +550,27 @@ class AuthService:
         if not self._client:
             raise AuthError("Registration is not configured.")
         code = (code or "").strip()
+        print(f"[AUTH_DEBUG] validate_invitation: code={code!r}, require_owner={require_owner!r}")
         try:
             result = self._client.table("invitations").select("*").eq("code", code).execute()
         except Exception:
+            print(f"[AUTH_DEBUG] validate_invitation: DB query failed")
             raise AuthError("Could not verify invitation code.")
         if not result or not result.data:
+            print(f"[AUTH_DEBUG] validate_invitation: no data returned for code={code!r}")
             raise AuthError("Invalid invitation code.")
         invitation = result.data[0]
+        print(f"[AUTH_DEBUG] validate_invitation: DB record -> code={invitation.get('code')!r}, owner_invite={invitation.get('owner_invite')!r}, business_id={invitation.get('business_id')!r}")
         if invitation.get("is_invalidated"):
+            print(f"[AUTH_DEBUG] validate_invitation: BRANCH 1 - is_invalidated=True, rejecting")
             raise AuthError("This invitation has already been used.")
         if require_owner and not invitation.get("owner_invite", False):
+            print(f"[AUTH_DEBUG] validate_invitation: BRANCH 2 - require_owner=True but owner_invite=False, rejecting with 'not an owner invitation'")
             raise AuthError("This is not an owner invitation code.")
         if not require_owner and invitation.get("owner_invite", False):
+            print(f"[AUTH_DEBUG] validate_invitation: BRANCH 3 - require_owner=False but owner_invite=True, rejecting with 'business owners only'")
             raise AuthError("This code is for business owners only.")
+        print(f"[AUTH_DEBUG] validate_invitation: PASSED all checks")
         expires_at = invitation.get("expires_at", "")
         if expires_at:
             try:
@@ -581,6 +592,8 @@ class AuthService:
         code = f"{random.randint(100000, 999999)}"
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(hours=expires_in_hours)
+        print(f"[AUTH_DEBUG] generate_invitation_code called: business_id={business_id!r}, owner_invite={owner_invite!r}")
+        print(f"[AUTH_DEBUG]   Generated code={code!r}, inserting into DB with owner_invite={owner_invite!r}")
         try:
             self._client.table("invitations").insert({
                 "code": code, "business_id": business_id,
@@ -589,8 +602,21 @@ class AuthService:
                 "expires_at": expires_at.isoformat(),
                 "is_invalidated": False,
             }).execute()
+            print(f"[AUTH_DEBUG]   DB insert succeeded for code={code!r} with owner_invite={owner_invite!r}")
         except Exception as exc:
+            print(f"[AUTH_DEBUG]   DB insert FAILED: {exc}")
             raise AuthError(f"Failed to generate invitation: {exc}")
+        
+        # VERIFY: Immediately SELECT back what was actually stored
+        try:
+            verify = self._client.table("invitations").select("code, owner_invite, business_id").eq("code", code).execute()
+            if verify and verify.data:
+                print(f"[AUTH_DEBUG]   VERIFY SELECT after INSERT: code={verify.data[0].get('code')!r}, owner_invite={verify.data[0].get('owner_invite')!r}, business_id={verify.data[0].get('business_id')!r}")
+            else:
+                print(f"[AUTH_DEBUG]   VERIFY SELECT returned no data for code={code!r}")
+        except Exception as exc:
+            print(f"[AUTH_DEBUG]   VERIFY SELECT FAILED: {exc}")
+        
         return Invitation(code=code, business_id=business_id,
                           created_at=now.isoformat(), expires_at=expires_at.isoformat())
 
