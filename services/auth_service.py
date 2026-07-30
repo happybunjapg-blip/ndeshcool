@@ -41,10 +41,16 @@ class AuthService:
 
     def _init_client(self):
         import config
-        if config.SUPABASE_URL and config.SUPABASE_KEY:
+        # SAFE DIAGNOSTIC: Log which Supabase URL is being used (NOT the key)
+        supabase_url = config.SUPABASE_URL
+        has_key = bool(config.SUPABASE_KEY)
+        print(f"[CONFIG_DEBUG] SUPABASE_URL={supabase_url!r}")
+        print(f"[CONFIG_DEBUG] SUPABASE_KEY exists={has_key}")
+        print(f"[CONFIG_DEBUG] BACKEND={config.BACKEND!r}")
+        if supabase_url and config.SUPABASE_KEY:
             from supabase import create_client
-            self._client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
-            self._log(f"Initialized Supabase client: {config.SUPABASE_URL}")
+            self._client = create_client(supabase_url, config.SUPABASE_KEY)
+            self._log(f"Initialized Supabase client: {supabase_url}")
         else:
             self._log("Supabase not configured")
 
@@ -527,6 +533,11 @@ class AuthService:
             return
         
         try:
+            # Get Supabase config info (safe - URL only, not the key)
+            import config as app_config
+            supabase_url = app_config.SUPABASE_URL
+            backend = app_config.BACKEND
+            
             # Fetch the DB record fresh for display
             db_code = "N/A"
             db_owner_invite = "N/A"
@@ -543,6 +554,9 @@ class AuthService:
             branch_info = exception if exception else "PASSED (no exception)"
             
             message = (
+                f"CONFIG DEBUG\n\n"
+                f"Supabase URL: {supabase_url}\n"
+                f"Backend: {backend}\n\n"
                 f"QR DEBUG\n\n"
                 f"QR type: {inv_type}\n\n"
                 f"Code: {code}\n\n"
