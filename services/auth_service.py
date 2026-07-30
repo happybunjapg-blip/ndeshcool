@@ -412,7 +412,7 @@ class AuthService:
     # QR-BASED SIGNUP (WaterPilot redesign)
     # ----------------------------------------------------------------
     def sign_up_via_qr(self, qr_data: dict, first_name: str, last_name: str,
-                       email: str, password: str) -> User:
+                       email: str, password: str, page=None) -> User:
         """Create account from decoded QR invitation payload.
         
         qr_data must contain:
@@ -449,10 +449,18 @@ class AuthService:
         require_owner = (inv_type == "owner")
         print(f"[AUTH_DEBUG] sign_up_via_qr: calling validate_invitation(code={code!r}, require_owner={require_owner!r})")
         # Validate the invitation code
-        invitation = self.validate_invitation(code, require_owner=require_owner)
+        try:
+            invitation = self.validate_invitation(code, require_owner=require_owner)
+        except AuthError as exc:
+            # Show debug dialog before re-raising
+            self._show_debug_dialog(page, qr_data, code, inv_type, require_owner, exception=str(exc))
+            raise
         
         if invitation.business_id != business_id:
             raise AuthError("Invitation does not match this business.")
+        
+        # Show debug dialog on validation success
+        self._show_debug_dialog(page, qr_data, code, inv_type, require_owner, passed=True)
         
         self._log(f"QR signup: type={inv_type}, code={code}, business_id={business_id}")
         
@@ -508,6 +516,73 @@ class AuthService:
         role_enum = Role.OWNER if inv_type == "owner" else Role.WORKER
         return User(id=user_id, email=email, first_name=first_name, last_name=last_name,
                     role=role_enum, business_id=business_id)
+
+    # ----------------------------------------------------------------
+    # DEBUG DIALOG (temporary — shows runtime values on Android screen)
+    # ----------------------------------------------------------------
+    def _show_debug_dialog(self, page, qr_data, code, inv_type, require_owner, exception=None, passed=False):
+        """Show an on-screen AlertDialog with debug values."""
+        if page is None:
+            print("[DEBUG_DIALOG] No page provided, skipping dialog")
+            return
+        
+        try:
+            # Fetch the DB record fresh for display
+            db_code = "N/A"
+            db_owner_invite = "N/A"
+            db_business_id = "N/A"
+            try:
+                db_result = self._client.table("invitations").select("code, owner_invite, business_id").eq("code", code).execute()
+                if db_result and db_result.data:
+                    db_code = db_result.data[0].get("code", "N/A")
+                    db_owner_invite = str(db_result.data[0].get("owner_invite", "N/A"))
+                    db_business_id = db_result.data[0].get("business_id", "N/A")
+            except Exception as exc:
+                db_owner_invite = f"DB ERROR: {exc}"
+            
+            branch_info = exception if exception else "PASSED (no exception)"
+            
+            message = (
+                f"QR DEBUG\n\n"
+                f"QR type: {inv_type}\n\n"
+                f"Code: {code}\n\n"
+                f"Require owner: {require_owner}\n\n"
+                f"Database row:\n"
+                f"  code: {db_code}\n"
+                f"  owner_invite: {db_owner_invite}\n"
+                f"  business_id: {db_business_id}\n\n"
+                f"Branch executed: {branch_info}\n\n"
+                f"Exception: {exception or 'None'}"
+            )
+            
+            # Use page.run_task to show the dialog on the UI thread
+            import asyncio
+            async def _show():
+                dialog = ft.AlertDialog(
+                    title=ft.Text("QR DEBUG"),
+                    content=ft.Text(message, size=12, selectable=True),
+                    actions=[ft.TextButton("OK", on_click=lambda e: page.close(dialog))],
+                )
+                page.open(dialog)
+                page.update()
+            
+            # Run synchronously by scheduling on the page loop
+            try:
+                asyncio.run_coroutine_threadsafe(_show(), page.loop)
+            except Exception:
+                # Fallback: try direct call
+                try:
+                    dialog = ft.AlertDialog(
+                        title=ft.Text("QR DEBUG"),
+                        content=ft.Text(message, size=12, selectable=True),
+                        actions=[ft.TextButton("OK", on_click=lambda e: page.close(dialog))],
+                    )
+                    page.open(dialog)
+                    page.update()
+                except Exception as exc2:
+                    print(f"[DEBUG_DIALOG] Failed to show dialog: {exc2}")
+        except Exception as exc:
+            print(f"[DEBUG_DIALOG] Error: {exc}")
 
     # ----------------------------------------------------------------
     # DATABASE HELPERS

@@ -116,6 +116,7 @@ def build_join_registration(page: ft.Page, services: Services,
                 last_name=last_name,
                 email=email,
                 password=password,
+                page=page,
             )
             loading.visible = False
             page.update()
