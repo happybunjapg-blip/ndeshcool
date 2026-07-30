@@ -571,6 +571,7 @@ class AuthService:
             
             # Use page.run_task to show the dialog on the UI thread
             import asyncio
+            import flet as ft
             async def _show():
                 dialog = ft.AlertDialog(
                     title=ft.Text("QR DEBUG"),
