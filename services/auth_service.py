@@ -1,6 +1,27 @@
 """Production authentication service using Supabase Auth.
 
-All authentication uses Supabase Auth. No demo accounts exist.
+NEW CANONICAL INVITATION ARCHITECTURE
+--------------------------------------
+The database invitation record is the SOLE source of truth for:
+- business_id
+- role
+- validity
+- expiration
+- usage status
+
+QR codes contain ONLY the invitation code (no role, no business_id).
+
+New methods (canonical):
+  - generate_invitation(business_id, role) — creates invitation with explicit role
+  - lookup_invitation(code) — fetches invitation from DB (for display before join)
+  - join_business_with_invitation(code, ...) — single canonical team-member signup
+
+Old methods (deprecated, kept for backward compatibility):
+  - sign_up_worker() — delegates to join_business_with_invitation
+  - sign_up_second_owner() — delegates to join_business_with_invitation
+  - sign_up_via_qr() — delegates to join_business_with_invitation
+  - validate_invitation() — replaced by lookup_invitation
+  - generate_invitation_code() — replaced by generate_invitation
 """
 import random
 import uuid
@@ -41,7 +62,6 @@ class AuthService:
 
     def _init_client(self):
         import config
-        # SAFE DIAGNOSTIC: Log which Supabase URL is being used (NOT the key)
         supabase_url = config.SUPABASE_URL
         has_key = bool(config.SUPABASE_KEY)
         print(f"[CONFIG_DEBUG] SUPABASE_URL={supabase_url!r}")
@@ -75,7 +95,6 @@ class AuthService:
                 user = self._build_user_from_profile(result.user.id, result.user.email or "")
                 if user:
                     return user
-                # User exists in auth but no profile yet — they need to complete setup
                 self._log(f"Auth user exists but no profile: {result.user.email}")
                 return None
         except Exception as exc:
@@ -113,7 +132,6 @@ class AuthService:
         return None
 
     def _get_current_user_id(self) -> Optional[str]:
-        """Get the authenticated user's ID from the active session."""
         if not self._client:
             return None
         try:
@@ -154,7 +172,6 @@ class AuthService:
         user_id = result.user.id
         self._log(f"Sign in succeeded: user_id={user_id}, email={result.user.email}")
 
-        # Try to build user from profile
         user = self._build_user_from_profile(user_id, result.user.email or "")
         if user:
             self._log("Profile found — user is fully set up")
@@ -162,15 +179,11 @@ class AuthService:
                 self._save_session_tokens(result)
             return user
 
-        # No profile yet — user signed up but hasn't completed setup
-        # Try to find their profile or create it
         self._log("No profile found — checking if user needs setup")
         try:
-            # Look for the user's email in pending setups
             profile_result = self._client.table("profiles").select("*").eq("email", result.user.email).execute()
             if profile_result and profile_result.data:
                 profile = profile_result.data[0]
-                # Found a profile by email — link it to this user
                 self._client.table("profiles").update({"id": user_id}).eq("email", result.user.email).execute()
                 user = self._build_user_from_profile(user_id, result.user.email or "")
                 if user:
@@ -188,7 +201,7 @@ class AuthService:
         )
 
     # ----------------------------------------------------------------
-    # CREATE ACCOUNT
+    # PATH A: OWNER CREATION (no invitation involved)
     # ----------------------------------------------------------------
     def sign_up_owner(self, business_name: str, first_name: str, last_name: str,
                        email: str, password: str) -> User:
@@ -208,7 +221,6 @@ class AuthService:
         if not password or len(password) < 6:
             raise AuthError("Password must be at least 6 characters.")
 
-        # Step 1: Create auth user via Supabase
         self._log(f"Creating auth user: {email}")
         try:
             result = self._client.auth.sign_up({
@@ -220,7 +232,6 @@ class AuthService:
                         "last_name": last_name,
                         "business_name": business_name,
                     },
-                    # Don't redirect — this is a desktop app
                     "email_redirect_to": None,
                 },
             })
@@ -240,28 +251,24 @@ class AuthService:
         if not user_id:
             raise AuthError("Registration failed. Could not determine user ID.")
 
-        # Validate UUID
         try:
             uuid.UUID(user_id)
         except (ValueError, AttributeError):
             self._log(f"Invalid user_id format: {user_id}")
             raise AuthError("Registration failed. Invalid user identifier.")
 
-        # Step 2: Check if email confirmation is required
         has_session = hasattr(result, 'session') and result.session is not None
-        identity_verified = has_session  # If we got a session, user is auto-confirmed
+        identity_verified = has_session
 
         if identity_verified:
-            self._log("User is auto-confirmed (no email needed) — creating business + profile")
+            self._log("User is auto-confirmed — creating business + profile")
             business_id = self._create_owner_business(business_name, user_id)
             self._create_profile(user_id, email, first_name, last_name, "owner", business_id)
             self._save_session_tokens(result)
             self._log("Business and profile created successfully")
         else:
-            self._log("Email confirmation required — pre-creating profile for later setup")
-            # Pre-create the profile so it's ready when they confirm email and sign in
+            self._log("Email confirmation required — pre-creating profile")
             try:
-                # First create a business (we need a business_id)
                 biz_result = self._client.table("businesses").insert({
                     "name": business_name,
                 }).execute()
@@ -287,21 +294,331 @@ class AuthService:
         return User(id=user_id, email=email, first_name=first_name, last_name=last_name,
                     role=Role.OWNER, business_id=business_id)
 
-    def sign_up_worker(self, invitation_code: str, first_name: str, last_name: str,
-                       email: str, password: str) -> User:
+    # ====================================================================
+    # NEW CANONICAL INVITATION METHODS
+    # ====================================================================
+
+    # ----------------------------------------------------------------
+    # GENERATE INVITATION
+    # ----------------------------------------------------------------
+    def generate_invitation(self, business_id: str, role: str,
+                            expires_in_hours: int = 24) -> Invitation:
+        """Generate a new invitation with an explicit role.
+        
+        This is the canonical invitation creation method.
+        
+        Args:
+            business_id: The business to join.
+            role: 'worker' or 'co_owner'.
+            expires_in_hours: Hours until expiration.
+        
+        Returns:
+            Invitation object.
+        """
+        if not self._client:
+            raise AuthError("Invitations are not available.")
+        if not business_id:
+            raise AuthError("Business ID is required.")
+        if role not in ("worker", "co_owner"):
+            raise AuthError("Invalid invitation role. Must be 'worker' or 'co_owner'.")
+        
+        code = f"{random.randint(100000, 999999)}"
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=expires_in_hours)
+        
+        # Get the current user for created_by
+        created_by = self._get_current_user_id()
+        
+        self._log(f"Generating invitation: code={code}, business_id={business_id}, role={role}")
+        
+        try:
+            # Try to insert with new columns (role, status, created_by)
+            # If the migration hasn't been applied yet, fall back to old columns
+            try:
+                self._client.table("invitations").insert({
+                    "code": code, "business_id": business_id,
+                    "role": role,
+                    "status": "active",
+                    "created_by": created_by,
+                    "created_at": now.isoformat(),
+                    "expires_at": expires_at.isoformat(),
+                    # Legacy fields for backward compatibility
+                    "owner_invite": (role == "co_owner"),
+                    "is_invalidated": False,
+                }).execute()
+            except Exception:
+                # Fallback: if new columns don't exist yet, use old schema
+                # This ensures backward compatibility during migration
+                self._log("New columns may not exist yet — falling back to old schema")
+                self._client.table("invitations").insert({
+                    "code": code, "business_id": business_id,
+                    "owner_invite": (role == "co_owner"),
+                    "created_at": now.isoformat(),
+                    "expires_at": expires_at.isoformat(),
+                    "is_invalidated": False,
+                }).execute()
+        except Exception as exc:
+            self._log_exc(f"Failed to generate invitation: {exc}")
+            raise AuthError(f"Failed to generate invitation: {exc}")
+        
+        return Invitation(
+            code=code, business_id=business_id,
+            role=role,
+            status="active",
+            created_at=now.isoformat(), expires_at=expires_at.isoformat(),
+            created_by=created_by or "",
+        )
+
+    # ----------------------------------------------------------------
+    # LOOKUP INVITATION (for display before join)
+    # ----------------------------------------------------------------
+    def lookup_invitation(self, code: str) -> dict:
+        """Look up an invitation by code and return its details.
+        
+        This is the canonical invitation lookup method.
+        It returns ONLY the information needed for display/validation.
+        The role and business_id come from the DATABASE, never from the client.
+        
+        Args:
+            code: The invitation code.
+        
+        Returns:
+            dict with: code, business_id, role, status, expires_at, business_name
+        
+        Raises:
+            AuthError if the invitation is invalid.
+        """
         if not self._client:
             raise AuthError("Registration is not configured.")
-        email = (email or "").strip().lower()
-        password = (password or "").strip()
+        code = (code or "").strip()
+        if not code:
+            raise AuthError("Invitation code is required.")
+        
+        self._log(f"Looking up invitation: code={code}")
+        
+        # Try to use the SECURITY DEFINER function first (if migration applied)
+        try:
+            result = self._client.rpc("lookup_invitation", {"p_code": code}).execute()
+            if result and result.data:
+                data = result.data[0] if isinstance(result.data, list) else result.data
+                self._log(f"Invitation found via RPC: role={data.get('role')}, business={data.get('business_name')}")
+                return {
+                    "code": data["code"],
+                    "business_id": data["business_id"],
+                    "role": data["role"],
+                    "status": data["status"],
+                    "expires_at": str(data["expires_at"]),
+                    "business_name": data.get("business_name", ""),
+                }
+        except Exception as exc:
+            self._log(f"RPC lookup failed (may not be migrated yet): {exc}")
+        
+        # Fallback: direct table query (before migration)
+        try:
+            result = self._client.table("invitations").select("*").eq("code", code).execute()
+        except Exception:
+            raise AuthError("Could not verify invitation code.")
+        
+        if not result or not result.data:
+            raise AuthError("Invalid invitation code.")
+        
+        invitation = result.data[0]
+        
+        # Check if already used
+        if invitation.get("is_invalidated"):
+            raise AuthError("This invitation has already been used.")
+        
+        # Check expiration
+        expires_at = invitation.get("expires_at", "")
+        if expires_at:
+            try:
+                exp = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+                if exp < datetime.now(timezone.utc):
+                    raise AuthError("This invitation code has expired.")
+            except ValueError:
+                pass
+        
+        # Determine role from new 'role' column or fall back to owner_invite
+        role = invitation.get("role")
+        if not role:
+            role = "co_owner" if invitation.get("owner_invite", False) else "worker"
+        
+        # Get business name
+        business_name = ""
+        try:
+            biz_result = self._client.table("businesses").select("name").eq("id", invitation["business_id"]).execute()
+            if biz_result and biz_result.data:
+                business_name = biz_result.data[0].get("name", "")
+        except Exception:
+            pass
+        
+        status = invitation.get("status", "active" if not invitation.get("is_invalidated") else "used")
+        
+        return {
+            "code": invitation["code"],
+            "business_id": invitation["business_id"],
+            "role": role,
+            "status": status,
+            "expires_at": str(expires_at),
+            "business_name": business_name,
+        }
+
+    # ----------------------------------------------------------------
+    # CANONICAL JOIN METHOD: PATH B - TEAM MEMBER
+    # ----------------------------------------------------------------
+    def join_business_with_invitation(self, code: str, first_name: str, last_name: str,
+                                       email: str, password: str) -> User:
+        """Single canonical method for joining a business via invitation.
+        
+        This is the ONLY team-member signup method.
+        The database invitation record determines role and business_id.
+        The client CANNOT override role or business_id.
+        
+        Args:
+            code: The invitation code.
+            first_name: User's first name.
+            last_name: User's last name.
+            email: User's email.
+            password: User's password.
+        
+        Returns:
+            User object with role from the invitation record.
+        """
+        if not self._client:
+            raise AuthError("Registration is not configured.")
+        
+        code = (code or "").strip()
         first_name = (first_name or "").strip()
         last_name = (last_name or "").strip()
+        email = (email or "").strip().lower()
+        password = (password or "").strip()
+        
+        if not code:
+            raise AuthError("Invitation code is required.")
         if not first_name or not last_name:
             raise AuthError("First and last name are required.")
         if not email:
             raise AuthError("Email is required.")
         if not password or len(password) < 6:
             raise AuthError("Password must be at least 6 characters.")
+        
+        # Step 1: Look up invitation (authoritative source)
+        self._log(f"Join business with invitation: code={code}")
+        invitation_data = self.lookup_invitation(code)
+        
+        business_id = invitation_data["business_id"]
+        role = invitation_data["role"]
+        self._log(f"Invitation resolved: business_id={business_id}, role={role}")
+        
+        # Step 2: Check if role is valid
+        if role not in ("worker", "co_owner"):
+            raise AuthError(f"Invalid invitation role: {role}")
+        
+        # Step 3: Create Supabase Auth account
+        try:
+            result = self._client.auth.sign_up({
+                "email": email, "password": password,
+                "options": {"data": {"first_name": first_name, "last_name": last_name}},
+            })
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "already registered" in msg:
+                raise AuthError("An account with this email already exists.")
+            raise AuthError(f"Registration failed: {exc}")
+        
+        user_id = self._extract_user_id(result)
+        if not user_id:
+            raise AuthError("Registration failed.")
+        
+        has_session = hasattr(result, 'session') and result.session is not None
+        identity_verified = has_session
+        
+        # Step 4: Create profile and mark invitation as used
+        try:
+            if identity_verified:
+                self._create_profile(user_id, email, first_name, last_name, role, business_id)
+                self._consume_invitation(code)
+                self._save_session_tokens(result)
+                self._log(f"Account created: role={role}, business_id={business_id}")
+            else:
+                # Pre-create profile for email confirmation flow
+                self._client.table("profiles").insert({
+                    "id": user_id, "email": email,
+                    "first_name": first_name, "last_name": last_name,
+                    "phone": "", "role": role, "business_id": business_id,
+                }).execute()
+                self._consume_invitation(code)
+                raise AuthError(
+                    "Account created! Please check your email to confirm your account, "
+                    "then sign in."
+                )
+        except AuthError:
+            raise
+        except Exception as exc:
+            self._log_exc(f"Account setup failed: {exc}")
+            raise AuthError(f"Account setup failed: {exc}")
+        
+        # Step 5: Return User with correct role enum
+        role_enum = Role.CO_OWNER if role == "co_owner" else Role.WORKER
+        return User(id=user_id, email=email, first_name=first_name, last_name=last_name,
+                    role=role_enum, business_id=business_id)
 
+    # ----------------------------------------------------------------
+    # CONSUME INVITATION (atomic)
+    # ----------------------------------------------------------------
+    def _consume_invitation(self, code: str) -> bool:
+        """Atomically mark an invitation as used.
+        
+        Returns True if consumed, False if already consumed.
+        """
+        if not self._client:
+            return False
+        
+        # Try the consume_invitation RPC function first (if migration applied)
+        try:
+            user_id = self._get_current_user_id()
+            if user_id:
+                result = self._client.rpc("consume_invitation", {
+                    "p_code": code, "p_user_id": user_id
+                }).execute()
+                if result and result.data:
+                    return bool(result.data[0] if isinstance(result.data, list) else result.data)
+        except Exception:
+            self._log("RPC consume_invitation failed (may not be migrated yet)")
+        
+        # Fallback: direct update
+        try:
+            # Try updating with new columns first
+            result = self._client.table("invitations").update({
+                "status": "used",
+                "used_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("code", code).eq("status", "active").execute()
+            if result and result.data:
+                return True
+        except Exception:
+            pass
+        
+        # Fallback: old column update
+        try:
+            result = self._client.table("invitations").update({
+                "is_invalidated": True,
+            }).eq("code", code).eq("is_invalidated", False).execute()
+            return bool(result and result.data)
+        except Exception as exc:
+            self._log(f"Failed to consume invitation: {exc}")
+            return False
+
+    # ====================================================================
+    # DEPRECATED METHODS (kept for backward compatibility)
+    # ====================================================================
+
+    # ----------------------------------------------------------------
+    # DEPRECATED: sign_up_worker
+    # ----------------------------------------------------------------
+    def sign_up_worker(self, invitation_code: str, first_name: str, last_name: str,
+                       email: str, password: str) -> User:
+        """DEPRECATED: Use join_business_with_invitation() instead."""
+        self._log("WARNING: sign_up_worker is deprecated, use join_business_with_invitation")
         invitation = self.validate_invitation(invitation_code, require_owner=False)
         business_id = invitation.business_id
         self._log(f"Valid invitation: code={invitation_code}, business_id={business_id}")
@@ -333,7 +650,6 @@ class AuthService:
                 self._save_session_tokens(result)
                 self._log("Worker account fully created")
             else:
-                # Pre-create profile for when they confirm email
                 self._client.table("profiles").insert({
                     "id": user_id, "email": email,
                     "first_name": first_name, "last_name": last_name,
@@ -355,20 +671,13 @@ class AuthService:
         return User(id=user_id, email=email, first_name=first_name, last_name=last_name,
                     role=Role.WORKER, business_id=business_id)
 
+    # ----------------------------------------------------------------
+    # DEPRECATED: sign_up_second_owner
+    # ----------------------------------------------------------------
     def sign_up_second_owner(self, invitation_code: str, first_name: str, last_name: str,
                               email: str, password: str) -> User:
-        if not self._client:
-            raise AuthError("Registration is not configured.")
-        email = (email or "").strip().lower()
-        password = (password or "").strip()
-        first_name = (first_name or "").strip()
-        last_name = (last_name or "").strip()
-        if not first_name or not last_name:
-            raise AuthError("First and last name are required.")
-        if not email:
-            raise AuthError("Email is required.")
-        if not password or len(password) < 6:
-            raise AuthError("Password must be at least 6 characters.")
+        """DEPRECATED: Use join_business_with_invitation() instead."""
+        self._log("WARNING: sign_up_second_owner is deprecated, use join_business_with_invitation")
         invitation = self.validate_invitation(invitation_code, require_owner=True)
         business_id = invitation.business_id
         try:
@@ -415,195 +724,49 @@ class AuthService:
                     role=Role.OWNER, business_id=business_id)
 
     # ----------------------------------------------------------------
-    # QR-BASED SIGNUP (WaterPilot redesign)
+    # DEPRECATED: sign_up_via_qr — delegates to join_business_with_invitation
     # ----------------------------------------------------------------
     def sign_up_via_qr(self, qr_data: dict, first_name: str, last_name: str,
                        email: str, password: str, page=None) -> User:
-        """Create account from decoded QR invitation payload.
+        """DEPRECATED: Use join_business_with_invitation() instead.
         
-        qr_data must contain:
-          - code: the 6-digit invitation code
-          - type: "worker" or "owner"
-          - business_id: the business UUID
-        
-        The invitation is validated, then the user is created with the
-        role determined by the QR type (not guessed).
+        This method now delegates to join_business_with_invitation().
+        The qr_data dict is IGNORED except for the 'code' field.
+        Role and business_id are determined by the database, not the QR.
         """
         if not self._client:
             raise AuthError("Registration is not configured.")
         
         code = (qr_data.get("code") or "").strip()
-        inv_type = (qr_data.get("type") or "").strip().lower()
-        business_id = (qr_data.get("business_id") or "").strip()
-        
-        if not code or inv_type not in ("worker", "owner") or not business_id:
+        if not code:
             raise AuthError("Invalid invitation QR. Please scan again.")
         
-        email = (email or "").strip().lower()
-        password = (password or "").strip()
-        first_name = (first_name or "").strip()
-        last_name = (last_name or "").strip()
+        # Log the deprecation warning
+        self._log("WARNING: sign_up_via_qr is deprecated, using join_business_with_invitation")
+        self._log(f"QR data received (code only is used): code={code}")
         
-        if not first_name or not last_name:
-            raise AuthError("First and last name are required.")
-        if not email:
-            raise AuthError("Email is required.")
-        if not password or len(password) < 6:
-            raise AuthError("Password must be at least 6 characters.")
-        
-        print(f"[AUTH_DEBUG] sign_up_via_qr: received qr_data -> code={code!r}, inv_type={inv_type!r}, business_id={business_id!r}")
-        require_owner = (inv_type == "owner")
-        print(f"[AUTH_DEBUG] sign_up_via_qr: calling validate_invitation(code={code!r}, require_owner={require_owner!r})")
-        # Validate the invitation code
-        try:
-            invitation = self.validate_invitation(code, require_owner=require_owner)
-        except AuthError as exc:
-            # Show debug dialog before re-raising
-            self._show_debug_dialog(page, qr_data, code, inv_type, require_owner, exception=str(exc))
-            raise
-        
-        if invitation.business_id != business_id:
-            raise AuthError("Invitation does not match this business.")
-        
-        # Show debug dialog on validation success
-        self._show_debug_dialog(page, qr_data, code, inv_type, require_owner, passed=True)
-        
-        self._log(f"QR signup: type={inv_type}, code={code}, business_id={business_id}")
-        
-        # Create the auth user
-        try:
-            result = self._client.auth.sign_up({
-                "email": email, "password": password,
-                "options": {"data": {"first_name": first_name, "last_name": last_name}},
-            })
-        except Exception as exc:
-            msg = str(exc).lower()
-            if "already registered" in msg:
-                raise AuthError("An account with this email already exists.")
-            raise AuthError(f"Registration failed: {exc}")
-        
-        user_id = self._extract_user_id(result)
-        if not user_id:
-            raise AuthError("Registration failed.")
-        
-        has_session = hasattr(result, 'session') and result.session is not None
-        identity_verified = has_session
-        
-        role_str = "owner" if inv_type == "owner" else "worker"
-        
-        try:
-            if identity_verified:
-                self._create_profile(user_id, email, first_name, last_name, role_str, business_id)
-                self._client.table("invitations").update({
-                    "is_invalidated": True,
-                }).eq("code", code).execute()
-                self._save_session_tokens(result)
-                self._log(f"{role_str.title()} account fully created via QR")
-            else:
-                # Pre-create profile for when they confirm email
-                self._client.table("profiles").insert({
-                    "id": user_id, "email": email,
-                    "first_name": first_name, "last_name": last_name,
-                    "phone": "", "role": role_str, "business_id": business_id,
-                }).execute()
-                self._client.table("invitations").update({
-                    "is_invalidated": True,
-                }).eq("code", code).execute()
-                raise AuthError(
-                    "Account created! Please check your email to confirm your account, "
-                    "then sign in."
-                )
-        except AuthError:
-            raise
-        except Exception as exc:
-            self._log_exc(f"QR account setup failed: {exc}")
-            raise AuthError(f"Account setup failed: {exc}")
-        
-        role_enum = Role.OWNER if inv_type == "owner" else Role.WORKER
-        return User(id=user_id, email=email, first_name=first_name, last_name=last_name,
-                    role=role_enum, business_id=business_id)
+        # Delegate to the canonical method
+        # The lookup_invitation method will determine role and business_id from DB
+        return self.join_business_with_invitation(
+            code=code,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            password=password,
+        )
 
     # ----------------------------------------------------------------
-    # DEBUG DIALOG (temporary — shows runtime values on Android screen)
+    # DEPRECATED DEBUG DIALOG
     # ----------------------------------------------------------------
     def _show_debug_dialog(self, page, qr_data, code, inv_type, require_owner, exception=None, passed=False):
-        """Show an on-screen AlertDialog with debug values."""
-        if page is None:
-            print("[DEBUG_DIALOG] No page provided, skipping dialog")
-            return
-        
-        try:
-            # Get Supabase config info (safe - URL only, not the key)
-            import config as app_config
-            supabase_url = app_config.SUPABASE_URL
-            backend = app_config.BACKEND
-            
-            # Fetch the DB record fresh for display
-            db_code = "N/A"
-            db_owner_invite = "N/A"
-            db_business_id = "N/A"
-            try:
-                db_result = self._client.table("invitations").select("code, owner_invite, business_id").eq("code", code).execute()
-                if db_result and db_result.data:
-                    db_code = db_result.data[0].get("code", "N/A")
-                    db_owner_invite = str(db_result.data[0].get("owner_invite", "N/A"))
-                    db_business_id = db_result.data[0].get("business_id", "N/A")
-            except Exception as exc:
-                db_owner_invite = f"DB ERROR: {exc}"
-            
-            branch_info = exception if exception else "PASSED (no exception)"
-            
-            message = (
-                f"CONFIG DEBUG\n\n"
-                f"Supabase URL: {supabase_url}\n"
-                f"Backend: {backend}\n\n"
-                f"QR DEBUG\n\n"
-                f"QR type: {inv_type}\n\n"
-                f"Code: {code}\n\n"
-                f"Require owner: {require_owner}\n\n"
-                f"Database row:\n"
-                f"  code: {db_code}\n"
-                f"  owner_invite: {db_owner_invite}\n"
-                f"  business_id: {db_business_id}\n\n"
-                f"Branch executed: {branch_info}\n\n"
-                f"Exception: {exception or 'None'}"
-            )
-            
-            # Use page.run_task to show the dialog on the UI thread
-            import asyncio
-            import flet as ft
-            async def _show():
-                dialog = ft.AlertDialog(
-                    title=ft.Text("QR DEBUG"),
-                    content=ft.Text(message, size=12, selectable=True),
-                    actions=[ft.TextButton("OK", on_click=lambda e: page.close(dialog))],
-                )
-                page.open(dialog)
-                page.update()
-            
-            # Run synchronously by scheduling on the page loop
-            try:
-                asyncio.run_coroutine_threadsafe(_show(), page.loop)
-            except Exception:
-                # Fallback: try direct call
-                try:
-                    dialog = ft.AlertDialog(
-                        title=ft.Text("QR DEBUG"),
-                        content=ft.Text(message, size=12, selectable=True),
-                        actions=[ft.TextButton("OK", on_click=lambda e: page.close(dialog))],
-                    )
-                    page.open(dialog)
-                    page.update()
-                except Exception as exc2:
-                    print(f"[DEBUG_DIALOG] Failed to show dialog: {exc2}")
-        except Exception as exc:
-            print(f"[DEBUG_DIALOG] Error: {exc}")
+        """DEPRECATED: Debug dialog is no longer needed."""
+        pass
 
     # ----------------------------------------------------------------
     # DATABASE HELPERS
     # ----------------------------------------------------------------
     def _create_owner_business(self, business_name: str, owner_id: str) -> str:
-        """Create a business and return its ID. owner_id is set after creation."""
+        """Create a business and return its ID."""
         try:
             biz_result = self._client.table("businesses").insert({
                 "name": business_name,
@@ -634,33 +797,30 @@ class AuthService:
             raise AuthError(f"Failed to create profile: {exc}")
 
     # ----------------------------------------------------------------
-    # INVITATION
+    # DEPRECATED: validate_invitation — replaced by lookup_invitation
     # ----------------------------------------------------------------
     def validate_invitation(self, code: str, require_owner: bool = False) -> Invitation:
+        """DEPRECATED: Use lookup_invitation() instead.
+        
+        Kept for backward compatibility with sign_up_worker and sign_up_second_owner.
+        """
+        self._log("WARNING: validate_invitation is deprecated, use lookup_invitation")
         if not self._client:
             raise AuthError("Registration is not configured.")
         code = (code or "").strip()
-        print(f"[AUTH_DEBUG] validate_invitation: code={code!r}, require_owner={require_owner!r}")
         try:
             result = self._client.table("invitations").select("*").eq("code", code).execute()
         except Exception:
-            print(f"[AUTH_DEBUG] validate_invitation: DB query failed")
             raise AuthError("Could not verify invitation code.")
         if not result or not result.data:
-            print(f"[AUTH_DEBUG] validate_invitation: no data returned for code={code!r}")
             raise AuthError("Invalid invitation code.")
         invitation = result.data[0]
-        print(f"[AUTH_DEBUG] validate_invitation: DB record -> code={invitation.get('code')!r}, owner_invite={invitation.get('owner_invite')!r}, business_id={invitation.get('business_id')!r}")
         if invitation.get("is_invalidated"):
-            print(f"[AUTH_DEBUG] validate_invitation: BRANCH 1 - is_invalidated=True, rejecting")
             raise AuthError("This invitation has already been used.")
         if require_owner and not invitation.get("owner_invite", False):
-            print(f"[AUTH_DEBUG] validate_invitation: BRANCH 2 - require_owner=True but owner_invite=False, rejecting with 'not an owner invitation'")
             raise AuthError("This is not an owner invitation code.")
         if not require_owner and invitation.get("owner_invite", False):
-            print(f"[AUTH_DEBUG] validate_invitation: BRANCH 3 - require_owner=False but owner_invite=True, rejecting with 'business owners only'")
             raise AuthError("This code is for business owners only.")
-        print(f"[AUTH_DEBUG] validate_invitation: PASSED all checks")
         expires_at = invitation.get("expires_at", "")
         if expires_at:
             try:
@@ -675,48 +835,31 @@ class AuthService:
             created_at=invitation.get("created_at", ""), expires_at=expires_at,
         )
 
+    # ----------------------------------------------------------------
+    # DEPRECATED: generate_invitation_code — replaced by generate_invitation
+    # ----------------------------------------------------------------
     def generate_invitation_code(self, business_id: str, owner_invite: bool = False,
                                   expires_in_hours: int = 24) -> Invitation:
-        if not self._client:
-            raise AuthError("Invitations are not available.")
-        code = f"{random.randint(100000, 999999)}"
-        now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(hours=expires_in_hours)
-        print(f"[AUTH_DEBUG] generate_invitation_code called: business_id={business_id!r}, owner_invite={owner_invite!r}")
-        print(f"[AUTH_DEBUG]   Generated code={code!r}, inserting into DB with owner_invite={owner_invite!r}")
-        try:
-            self._client.table("invitations").insert({
-                "code": code, "business_id": business_id,
-                "owner_invite": owner_invite,
-                "created_at": now.isoformat(),
-                "expires_at": expires_at.isoformat(),
-                "is_invalidated": False,
-            }).execute()
-            print(f"[AUTH_DEBUG]   DB insert succeeded for code={code!r} with owner_invite={owner_invite!r}")
-        except Exception as exc:
-            print(f"[AUTH_DEBUG]   DB insert FAILED: {exc}")
-            raise AuthError(f"Failed to generate invitation: {exc}")
-        
-        # VERIFY: Immediately SELECT back what was actually stored
-        try:
-            verify = self._client.table("invitations").select("code, owner_invite, business_id").eq("code", code).execute()
-            if verify and verify.data:
-                print(f"[AUTH_DEBUG]   VERIFY SELECT after INSERT: code={verify.data[0].get('code')!r}, owner_invite={verify.data[0].get('owner_invite')!r}, business_id={verify.data[0].get('business_id')!r}")
-            else:
-                print(f"[AUTH_DEBUG]   VERIFY SELECT returned no data for code={code!r}")
-        except Exception as exc:
-            print(f"[AUTH_DEBUG]   VERIFY SELECT FAILED: {exc}")
-        
-        return Invitation(code=code, business_id=business_id,
-                          created_at=now.isoformat(), expires_at=expires_at.isoformat())
+        """DEPRECATED: Use generate_invitation(business_id, role) instead."""
+        self._log("WARNING: generate_invitation_code is deprecated, use generate_invitation")
+        # Delegate to new method
+        role = "co_owner" if owner_invite else "worker"
+        return self.generate_invitation(business_id, role, expires_in_hours)
 
     def revoke_invitation(self, code: str) -> None:
         if not self._client:
             return
         try:
-            self._client.table("invitations").update({
-                "is_invalidated": True,
-            }).eq("code", code).execute()
+            # Try new status column first
+            try:
+                self._client.table("invitations").update({
+                    "status": "revoked",
+                }).eq("code", code).execute()
+            except Exception:
+                # Fallback to old column
+                self._client.table("invitations").update({
+                    "is_invalidated": True,
+                }).eq("code", code).execute()
             self._log(f"Invitation {code} revoked")
         except Exception as exc:
             self._log(f"Failed to revoke {code}: {exc}")

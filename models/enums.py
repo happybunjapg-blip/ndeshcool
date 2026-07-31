@@ -8,6 +8,7 @@ from enum import Enum
 
 class Role(str, Enum):
     OWNER = "owner"
+    CO_OWNER = "co_owner"
     WORKER = "worker"
 
 

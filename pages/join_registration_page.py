@@ -1,7 +1,11 @@
 """Registration form displayed after a successful QR scan.
 
-This form does NOT ask for Business Name — the business already exists.
-The role (worker/owner) is determined by the QR data, not user input.
+The QR code contains ONLY the invitation code.
+The database invitation record determines:
+- business_id (which business to join)
+- role (worker or co_owner)
+
+The client NEVER determines role or business_id from QR parameters.
 """
 import traceback
 import flet as ft
@@ -18,24 +22,37 @@ def build_join_registration(page: ft.Page, services: Services,
     """Build registration form for joining via QR invitation.
     
     Args:
-        qr_data: Decoded QR payload with code, type, business_id.
+        qr_data: Decoded QR payload — ONLY 'code' is used.
         on_account_created: Called with User on success.
         on_back_to_scanner: Called when user wants to re-scan.
     """
-    inv_type = qr_data.get("type", "worker")
-    role_label = "Co-owner" if inv_type == "owner" else "Worker"
+    code = (qr_data.get("code") or "").strip()
+    
+    # State for invitation lookup
+    invitation_info = {}
+    lookup_done = False
+    lookup_error = ""
     
     error_text = ft.Text("", size=12, color=theme.DANGER, visible=False)
     loading = ft.ProgressRing(width=20, height=20, stroke_width=2, color=theme.ACCENT, visible=False)
     
-    qr_info = ft.Container(
-        content=ft.Row([
-            ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=theme.SUCCESS, size=18),
-            ft.Text(f"✓ {role_label} invitation verified", size=13, color=theme.SUCCESS),
-        ], spacing=6),
+    # Invitation info display (shown after successful DB lookup)
+    business_name_text = ft.Text("", size=14, color=theme.text_primary(), weight=ft.FontWeight.W_600)
+    role_text = ft.Text("", size=13, color=theme.ACCENT, weight=ft.FontWeight.W_500)
+    invitation_status = ft.Container(
+        content=ft.Column([
+            ft.Row([
+                ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=theme.SUCCESS, size=18),
+                ft.Text("Invitation code detected", size=13, color=theme.SUCCESS),
+            ], spacing=6),
+            ft.Container(height=4),
+            business_name_text,
+            role_text,
+        ], spacing=2),
         padding=ft.Padding(12, 8, 12, 8),
         border_radius=8,
         bgcolor=ft.Colors.with_opacity(0.1, theme.SUCCESS),
+        visible=False,
     )
     
     first_name_field = ft.TextField(
@@ -68,9 +85,44 @@ def build_join_registration(page: ft.Page, services: Services,
         border_radius=theme.RADIUS_INPUT,
     )
     
+    def _do_lookup():
+        """Look up the invitation from the database."""
+        nonlocal lookup_done, lookup_error, invitation_info
+        if lookup_done or not code:
+            return
+        
+        try:
+            result = services.auth.lookup_invitation(code)
+            invitation_info = result
+            lookup_done = True
+            lookup_error = ""
+            
+            # Update UI with invitation details from database
+            business_name = result.get("business_name", "the business")
+            role = result.get("role", "worker")
+            role_label = "Co-owner" if role == "co_owner" else "Worker"
+            
+            business_name_text.value = f"Business: {business_name}"
+            role_text.value = f"Joining as: {role_label}"
+            invitation_status.visible = True
+            page.update()
+            
+        except AuthError as err:
+            lookup_error = str(err)
+            lookup_done = True
+            error_text.value = str(err)
+            error_text.visible = True
+            page.update()
+        except Exception as err:
+            lookup_error = "Could not verify invitation. Please check your connection."
+            lookup_done = True
+            error_text.value = lookup_error
+            error_text.visible = True
+            page.update()
+    
     def _do_signup(e):
+        nonlocal invitation_info
         print(f"[JOIN_DEBUG] _do_signup called")
-        print(f"[JOIN_DEBUG] qr_data passed to handler: {qr_data!r}")
         try:
             error_text.visible = False
             loading.visible = True
@@ -109,14 +161,15 @@ def build_join_registration(page: ft.Page, services: Services,
                 page.update()
                 return
             
-            print(f"[JOIN_DEBUG] calling sign_up_via_qr with qr_data={qr_data!r}")
-            user = services.auth.sign_up_via_qr(
-                qr_data=qr_data,
+            # Use the canonical join method
+            # The database determines role and business_id — NOT the client
+            print(f"[JOIN_DEBUG] calling join_business_with_invitation with code={code!r}")
+            user = services.auth.join_business_with_invitation(
+                code=code,
                 first_name=first_name,
                 last_name=last_name,
                 email=email,
                 password=password,
-                page=page,
             )
             loading.visible = False
             page.update()
@@ -137,6 +190,9 @@ def build_join_registration(page: ft.Page, services: Services,
         loading.visible = False
         page.update()
     
+    # Perform the invitation lookup immediately
+    _do_lookup()
+    
     # Logo
     logo_badge = ft.Container(
         content=ft.Icon(ft.Icons.WATER_DROP, color=ft.Colors.BLACK, size=24),
@@ -155,7 +211,7 @@ def build_join_registration(page: ft.Page, services: Services,
                 ft.Text("Join Business", size=22, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
                 ft.Text("Create your account to join", size=12, color=theme.TEXT_DIM),
                 ft.Container(height=4),
-                qr_info,
+                invitation_status,
                 ft.Container(height=8),
                 first_name_field,
                 last_name_field,

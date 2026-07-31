@@ -81,80 +81,73 @@ class PartnerSettingsPage:
 
     # ---- Invitation Management -----------------------------------------
 
-    def _generate_worker_invitation(self, e):
+    def _generate_invitation(self, role: str):
+        """Generate an invitation with the specified role.
+        
+        Args:
+            role: 'worker' or 'co_owner'
+        """
         business_id = self.services.state.repo.get_business_id()
         if not business_id:
             show_snack(self.page, "Business not configured.", theme.DANGER)
             return
         try:
-            print(f"[QR_GEN_DEBUG] === Generate Worker QR ===")
-            print(f"[QR_GEN_DEBUG] business_id={business_id!r}")
-            print(f"[QR_GEN_DEBUG] Calling generate_invitation_code(business_id, owner_invite=False)")
-            invitation = self.services.auth.generate_invitation_code(
-                business_id, owner_invite=False
+            invitation = self.services.auth.generate_invitation(
+                business_id, role=role
             )
-            print(f"[QR_GEN_DEBUG] generate_invitation_code returned: code={invitation.code!r}, business_id={invitation.business_id!r}")
-            print(f"[QR_GEN_DEBUG] Calling generate_invitation_qr_base64(code={invitation.code!r}, invitation_type='worker', business_id={invitation.business_id!r})")
-            self._show_worker_qr(invitation)
+            self._show_qr(invitation, role)
             self._refresh_invitations()
             self.page.update()
         except AuthError as err:
-            print(f"[QR_GEN_DEBUG] Worker QR generation failed: {err}")
             show_snack(self.page, str(err), theme.DANGER)
 
-    def _show_worker_qr(self, invitation):
-        """Display worker QR code and code in the worker section."""
-        from services.qr_service import generate_invitation_qr_base64
-        import base64
-        b64 = generate_invitation_qr_base64(invitation.code, "worker", invitation.business_id)
-        self.worker_qr_image.src = f"data:image/png;base64,{b64}"
-        self.worker_qr_image.visible = True
-        self.worker_code_display.value = invitation.code
-        self.worker_code_display.visible = True
-        self.worker_expiry_display.value = (
-            f"Expires: {invitation.expires_at[:19].replace('T', ' ')}"
-        )
-        self.worker_expiry_display.visible = True
-        self.worker_qr_container.visible = True
-        show_snack(self.page, f"Worker invitation: {invitation.code}")
+    def _generate_worker_invitation(self, e):
+        self._generate_invitation(role="worker")
 
     def _generate_owner_invitation(self, e):
-        business_id = self.services.state.repo.get_business_id()
-        if not business_id:
-            show_snack(self.page, "Business not configured.", theme.DANGER)
-            return
         # Check max owners limit
-        try:
-            owner_count = self.services.auth.count_owners(business_id)
-            if owner_count >= 2:
-                show_snack(self.page, "Maximum of 2 owners already reached.", theme.WARNING)
-                return
-        except Exception:
-            pass
-        try:
-            invitation = self.services.auth.generate_invitation_code(
-                business_id, owner_invite=True
-            )
-            self._show_owner_qr(invitation)
-            self._refresh_invitations()
-            self.page.update()
-        except AuthError as err:
-            show_snack(self.page, str(err), theme.DANGER)
+        business_id = self.services.state.repo.get_business_id()
+        if business_id:
+            try:
+                owner_count = self.services.auth.count_owners(business_id)
+                if owner_count >= 2:
+                    show_snack(self.page, "Maximum of 2 owners already reached.", theme.WARNING)
+                    return
+            except Exception:
+                pass
+        self._generate_invitation(role="co_owner")
 
-    def _show_owner_qr(self, invitation):
-        """Display owner QR code and code in the owner section."""
+    def _show_qr(self, invitation, role: str):
+        """Display QR code and invitation code.
+        
+        QR contains ONLY the invitation code — no role, no business_id.
+        The database is the sole source of truth.
+        """
         from services.qr_service import generate_invitation_qr_base64
-        b64 = generate_invitation_qr_base64(invitation.code, "owner", invitation.business_id)
-        self.owner_qr_image.src = f"data:image/png;base64,{b64}"
-        self.owner_qr_image.visible = True
-        self.owner_code_display.value = invitation.code
-        self.owner_code_display.visible = True
-        self.owner_expiry_display.value = (
-            f"Expires: {invitation.expires_at[:19].replace('T', ' ')}"
-        )
-        self.owner_expiry_display.visible = True
-        self.owner_qr_container.visible = True
-        show_snack(self.page, f"Co-owner invitation: {invitation.code}")
+        b64 = generate_invitation_qr_base64(invitation.code)
+        
+        if role == "worker":
+            self.worker_qr_image.src = f"data:image/png;base64,{b64}"
+            self.worker_qr_image.visible = True
+            self.worker_code_display.value = invitation.code
+            self.worker_code_display.visible = True
+            self.worker_expiry_display.value = (
+                f"Expires: {invitation.expires_at[:19].replace('T', ' ')}"
+            )
+            self.worker_expiry_display.visible = True
+            self.worker_qr_container.visible = True
+            show_snack(self.page, f"Worker invitation: {invitation.code}")
+        else:
+            self.owner_qr_image.src = f"data:image/png;base64,{b64}"
+            self.owner_qr_image.visible = True
+            self.owner_code_display.value = invitation.code
+            self.owner_code_display.visible = True
+            self.owner_expiry_display.value = (
+                f"Expires: {invitation.expires_at[:19].replace('T', ' ')}"
+            )
+            self.owner_expiry_display.visible = True
+            self.owner_qr_container.visible = True
+            show_snack(self.page, f"Co-owner invitation: {invitation.code}")
 
     def _revoke_invitation(self, code: str):
         try:
@@ -176,15 +169,32 @@ class PartnerSettingsPage:
 
         rows = []
         for inv in invitations:
-            is_owner = inv.get("owner_invite", False)
+            # Determine role from new 'role' column or fall back to owner_invite
+            role = inv.get("role", "")
+            if not role:
+                is_owner = inv.get("owner_invite", False)
+                role = "co_owner" if is_owner else "worker"
+            
+            # Determine status
+            status = inv.get("status", "")
+            if not status:
+                status = "used" if inv.get("is_invalidated") else "active"
+            
             status_color = theme.SUCCESS
             status_text = "Active"
-            if inv.get("is_invalidated"):
+            if status == "used":
                 status_color = theme.TEXT_DIM
                 status_text = "Used / Revoked"
+            elif status == "revoked":
+                status_color = theme.TEXT_DIM
+                status_text = "Revoked"
+            elif status == "expired":
+                status_color = theme.DANGER
+                status_text = "Expired"
             else:
+                # Check expiration
                 expires = inv.get("expires_at", "")
-                if expires:
+                if expires and status == "active":
                     from datetime import datetime, timezone
                     try:
                         exp = datetime.fromisoformat(expires.replace("Z", "+00:00"))
@@ -194,8 +204,8 @@ class PartnerSettingsPage:
                     except ValueError:
                         pass
 
-            role_label = "Co-owner" if is_owner else "Worker"
-            role_color = theme.GOLD if is_owner else theme.ACCENT
+            role_label = "Co-owner" if role == "co_owner" else "Worker"
+            role_color = theme.GOLD if role == "co_owner" else theme.ACCENT
 
             revoke_btn = ft.IconButton(
                 icon=ft.Icons.DELETE_OUTLINE,
@@ -223,7 +233,7 @@ class PartnerSettingsPage:
                         ], spacing=2, expand=True),
                         ft.Column([
                             ft.Text(inv.get("created_at", "")[:10], size=10, color=theme.TEXT_DIM),
-                            revoke_btn if not inv.get("is_invalidated") else ft.Container(),
+                            revoke_btn if status in ("active",) else ft.Container(),
                         ], horizontal_alignment=ft.CrossAxisAlignment.END, spacing=2),
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     padding=ft.Padding(12, 8, 4, 8),
@@ -257,7 +267,7 @@ class PartnerSettingsPage:
             content=ft.Column([
                 ft.Container(content=self.worker_qr_image, alignment=ft.Alignment.CENTER),
                 ft.Container(height=4),
-                ft.Text("Code:", size=11, color=theme.TEXT_DIM),
+                ft.Text("Worker Code:", size=11, color=theme.TEXT_DIM),
                 ft.Row([
                     self.worker_code_display,
                     ft.IconButton(
@@ -288,7 +298,7 @@ class PartnerSettingsPage:
             content=ft.Column([
                 ft.Container(content=self.owner_qr_image, alignment=ft.Alignment.CENTER),
                 ft.Container(height=4),
-                ft.Text("Code:", size=11, color=theme.TEXT_DIM),
+                ft.Text("Co-owner Code:", size=11, color=theme.TEXT_DIM),
                 ft.Row([
                     self.owner_code_display,
                     ft.IconButton(
