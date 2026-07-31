@@ -19,6 +19,15 @@ def build_business_day_gate(page: ft.Page, services: Services, user, on_opened) 
         except BusinessDayError as err:
             show_snack(page, str(err), theme.DANGER)
             return
+        except Exception as err:
+            # Any non-BusinessDayError (Supabase/Postgrest APIError, RLS
+            # rejection, network failure, schema mismatch, etc.) was
+            # previously left uncaught here. Flet swallows exceptions raised
+            # inside on_click handlers, so the user was left stuck on this
+            # page with no feedback and no navigation. Surface it instead.
+            print(f"[BUSINESS_DAY] Failed to open business day: {err!r}")
+            show_snack(page, "Couldn't open Business Day. Please try again.", theme.DANGER)
+            return
         on_opened()
 
     logo_badge = ft.Container(
