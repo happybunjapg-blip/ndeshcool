@@ -34,7 +34,8 @@ TEXT_MID = ft.Colors.with_opacity(0.75, ft.Colors.WHITE)
 # =====================================================================
 # LIGHT MODE COLORS (professional, high-contrast, daylight-readable)
 # =====================================================================
-LIGHT_BG_TOP = "#F0F4F8"
+BG_SURFACE = "#F7FAFC"
+LIGHT_BG_TOP = BG_SURFACE
 LIGHT_BG_BOTTOM = "#FFFFFF"
 
 LIGHT_SURFACE = "#FFFFFF"
@@ -42,13 +43,22 @@ LIGHT_SURFACE_BORDER = "#E2E8F0"
 LIGHT_CARD_SHADOW = ft.Colors.with_opacity(0.08, ft.Colors.BLACK)
 LIGHT_CARD_SHADOW_ELEVATED = ft.Colors.with_opacity(0.12, ft.Colors.BLACK)
 
-# Text — dark navy for maximum contrast on white
-LIGHT_TEXT_PRIMARY = "#1A202C"
-LIGHT_TEXT_SECONDARY = "#4A5568"
+# Brand palette
+PRIMARY = "#0F4C81"
+SECONDARY = "#27B5E8"
+ACCENT = "#57D9FF"
+TEXT_PRIMARY = "#142433"
+TEXT_SECONDARY = "#64748B"
+SUCCESS = "#10B981"
+DANGER = "#EF4444"
+
+# Text — calm, high-contrast palette for the brand
+LIGHT_TEXT_PRIMARY = TEXT_PRIMARY
+LIGHT_TEXT_SECONDARY = TEXT_SECONDARY
 LIGHT_TEXT_DIM = "#8E99A4"
 
 # Header — solid white with a soft bottom border
-LIGHT_HEADER_BG = "#FFFFFF"
+LIGHT_HEADER_BG = LIGHT_SURFACE
 
 # =====================================================================
 # MODE-AWARE HELPERS (used by widgets when DARK_MODE flag changes)
@@ -67,6 +77,15 @@ def text_secondary() -> str:
 def text_dim() -> str:
     """Muted / auxiliary text color."""
     return LIGHT_TEXT_DIM if not DARK_MODE else TEXT_DIM
+
+
+# =====================================================================
+# DESIGN TOKENS — reusable across the app
+# =====================================================================
+ANIMATION_CURVE = ft.AnimationCurve.EASE_IN_OUT
+ANIM_DURATION_FAST = 250
+ANIM_DURATION_MEDIUM = 600
+ANIM_DURATION_SLOW = 800
 
 
 def card_border() -> str:
@@ -108,15 +127,22 @@ def header_bg() -> str | None:
     return LIGHT_HEADER_BG if not DARK_MODE else None
 
 
-# =====================================================================
-# RADII
-# =====================================================================
-RADIUS_CARD = 22
-RADIUS_INPUT = 14
-RADIUS_PILL = 24
+def splash_background() -> str:
+    """Splash background color in the current theme mode."""
+    return LIGHT_BG_TOP if not DARK_MODE else BG_TOP
+
 
 # =====================================================================
-# SPACING SCALE
+# RADII — consistent corner radius system
+# =====================================================================
+RADIUS_CARD = 22        # hero / floating surfaces
+RADIUS_INPUT = 14       # fields, buttons, chips
+RADIUS_PILL = 24        # pills, status badges
+RADIUS_SM = 10          # small chips / inner elements
+RADIUS_MD = 16          # cards / dialogs
+
+# =====================================================================
+# SPACING SCALE — 4pt grid, deliberately spaced for mobile breathing room
 # =====================================================================
 SPACING_XXS = 4
 SPACING_XS = 8
@@ -124,6 +150,48 @@ SPACING_SM = 12
 SPACING_MD = 16
 SPACING_LG = 24
 SPACING_XL = 32
+SPACING_XXL = 40
+
+# =====================================================================
+# TYPOGRAPHY SCALE — consistent, calm hierarchy
+# =====================================================================
+class Type:
+    """Semantic type scale. Use these instead of hardcoding sizes.
+
+    Display  -> page hero (rare, one per screen max)
+    Title    -> screen titles / primary headings
+    Section  -> section headers inside a page
+    Body     -> default readable body text
+    Caption  -> auxiliary / meta text
+    Micro    -> lowest emphasis (badges, timestamps)
+    """
+    DISPLAY = 28
+    TITLE = 22
+    SECTION = 18
+    BODY = 14
+    CAPTION = 12
+    MICRO = 10
+
+
+# =====================================================================
+# SHADOWS — subtle (normal cards) vs elevated (hero / floating surface)
+# =====================================================================
+def shadow_subtle() -> ft.BoxShadow:
+    """Default card shadow — soft, barely raised."""
+    return ft.BoxShadow(
+        blur_radius=14,
+        color=ft.Colors.with_opacity(0.18, ft.Colors.BLACK),
+        offset=ft.Offset(0, 3),
+    )
+
+
+def shadow_elevated() -> ft.BoxShadow:
+    """Hero / floating / dialog shadow — clearly raised, premium."""
+    return ft.BoxShadow(
+        blur_radius=28,
+        color=ft.Colors.with_opacity(0.30, ft.Colors.BLACK),
+        offset=ft.Offset(0, 8),
+    )
 
 # =====================================================================
 # MOBILE / RESPONSIVE LAYOUT CONSTANTS

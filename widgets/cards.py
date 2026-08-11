@@ -4,7 +4,11 @@ import theme
 
 
 def glass_card(content, padding=16, margin=0, accent=None) -> ft.Container:
-    """Mode-aware card — solid white in light mode, glass gradient in dark mode.
+    """Clean, lightweight surface for normal content.
+
+    Per the design system, glassmorphism is reserved for *important*
+    surfaces (hero cards, floating totals, dialogs). Normal lists and
+    cards use a subtle, clean surface with a soft shadow.
 
     By default each card gets a bottom margin (``CARD_MARGIN_BOTTOM``) to
     create comfortable vertical breathing room on mobile.  Pass an explicit
@@ -16,15 +20,38 @@ def glass_card(content, padding=16, margin=0, accent=None) -> ft.Container:
         content=content,
         padding=padding,
         margin=margin,
-        border_radius=14,
-        bgcolor=None if theme.DARK_MODE else theme.LIGHT_SURFACE,
-        gradient=theme.card_bg() if theme.DARK_MODE else None,
+        border_radius=theme.RADIUS_MD,
+        bgcolor=theme.LIGHT_SURFACE if not theme.DARK_MODE else theme.SURFACE,
         border=ft.Border.all(
             1,
             ft.Colors.with_opacity(0.14, accent) if accent
             else (theme.LIGHT_SURFACE_BORDER if not theme.DARK_MODE else theme.SURFACE_BORDER),
         ),
-        shadow=theme.card_shadow(),
+        shadow=theme.shadow_subtle(),
+    )
+
+
+def hero_card(content, padding=20, margin=0, accent=None) -> ft.Container:
+    """Elevated, frosted surface for the ONE important element per screen.
+
+    Use sparingly — dashboard summary, floating totals, modal dialogs.
+    This is where glassmorphism belongs.
+    """
+    if margin == 0:
+        margin = ft.Margin(0, 0, 0, theme.CARD_MARGIN_BOTTOM)
+    return ft.Container(
+        content=content,
+        padding=padding,
+        margin=margin,
+        border_radius=theme.RADIUS_CARD,
+        bgcolor=None if theme.DARK_MODE else theme.LIGHT_SURFACE,
+        gradient=theme.card_bg() if theme.DARK_MODE else None,
+        border=ft.Border.all(
+            1,
+            ft.Colors.with_opacity(0.18, accent) if accent
+            else (theme.LIGHT_SURFACE_BORDER if not theme.DARK_MODE else theme.SURFACE_BORDER),
+        ),
+        shadow=theme.shadow_elevated(),
     )
 
 
@@ -34,7 +61,7 @@ def section_title(text: str, icon=None) -> ft.Row:
         controls.append(ft.Icon(icon, size=18, color=theme.ACCENT))
     controls.append(
         ft.Text(
-            text, size=16, weight=ft.FontWeight.W_700,
+            text, size=theme.Type.SECTION, weight=ft.FontWeight.W_700,
             color=theme.text_primary(),
         )
     )

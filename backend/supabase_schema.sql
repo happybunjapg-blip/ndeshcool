@@ -43,6 +43,7 @@ create table if not exists invitations (
 
 -- ---- Products / inventory (FIFO batches live in a child table) ---------
 create table if not exists products (
+    id uuid not null default gen_random_uuid(),
     name text not null,
     business_id uuid not null references businesses(id) on delete cascade,
     category text not null check (category in ('bottle_water', 'accessory')),
@@ -51,9 +52,14 @@ create table if not exists products (
     selling_price numeric not null default 0,
     bottle_price numeric not null default 0,
     cost numeric not null default 0,
+    track_inventory boolean not null default true,
+    active boolean not null default true,
+    opening_stock numeric not null default 0,
+    created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     primary key (name, business_id)
 );
+create unique index if not exists products_id_key on products(id);
 
 create table if not exists product_batches (
     id bigint generated always as identity primary key,
@@ -64,6 +70,33 @@ create table if not exists product_batches (
     purchase_date date not null default current_date,
     created_at timestamptz not null default now(),
     foreign key (product_name, business_id) references products(name, business_id) on delete cascade
+);
+
+-- ---- Water Configuration: the station's core commodity ----------------
+create table if not exists water_config (
+    business_id uuid not null references businesses(id) on delete cascade,
+    cost_per_litre numeric not null default 1.0,
+    selling_price_per_litre numeric not null default 10.0,
+    refill_sizes jsonb not null default '[5, 10, 20]'::jsonb,
+    custom_allowed boolean not null default true,
+    future jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    primary key (business_id)
+);
+
+-- ---- Services: no stock, cost + selling price only ---------------------
+create table if not exists services (
+    id text not null,
+    business_id uuid not null references businesses(id) on delete cascade,
+    name text not null,
+    cost numeric not null default 0,
+    selling_price numeric not null default 0,
+    active boolean not null default true,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    primary key (id, business_id),
+    unique (name, business_id)
 );
 
 -- ---- Customers: ONLY credit customers are ever stored here -------------
@@ -105,7 +138,7 @@ create table if not exists transactions (
     business_id uuid not null references businesses(id) on delete cascade,
     type text not null check (type in (
         'water_refill', 'product_sale', 'bottle_water_sale',
-        'bulk_delivery', 'customer_payment', 'expense'
+        'bulk_delivery', 'service_sale', 'customer_payment', 'expense'
     )),
     business_day_id text,
     date date not null default current_date,
@@ -165,6 +198,8 @@ alter table profiles enable row level security;
 alter table invitations enable row level security;
 alter table products enable row level security;
 alter table product_batches enable row level security;
+alter table water_config enable row level security;
+alter table services enable row level security;
 alter table customers enable row level security;
 alter table business_days enable row level security;
 alter table transactions enable row level security;
@@ -216,12 +251,20 @@ create policy "business read timeline" on timeline_events for select
     using (business_id in (select business_id from profiles where id = auth.uid()));
 create policy "business read water_readings" on water_readings for select
     using (business_id in (select business_id from profiles where id = auth.uid()));
+create policy "business read water_config" on water_config for select
+    using (business_id in (select business_id from profiles where id = auth.uid()));
+create policy "business read services" on services for select
+    using (business_id in (select business_id from profiles where id = auth.uid()));
 
--- Owners can write to products, batches, customers
+-- Owners and co-owners can write to products, batches, customers
 create policy "owner write products" on products for all
-    using (business_id in (select business_id from profiles where id = auth.uid() and role = 'owner'));
+    using (business_id in (select business_id from profiles where id = auth.uid() and role in ('owner', 'co_owner')));
 create policy "owner write batches" on product_batches for all
-    using (business_id in (select business_id from profiles where id = auth.uid() and role = 'owner'));
+    using (business_id in (select business_id from profiles where id = auth.uid() and role in ('owner', 'co_owner')));
+create policy "owner write water_config" on water_config for all
+    using (business_id in (select business_id from profiles where id = auth.uid() and role in ('owner', 'co_owner')));
+create policy "owner write services" on services for all
+    using (business_id in (select business_id from profiles where id = auth.uid() and role in ('owner', 'co_owner')));
 
 -- Any authenticated user in the business can write transactions/expenses/timeline/water
 create policy "business write transactions" on transactions for insert
@@ -242,6 +285,8 @@ create policy "business write customers" on customers for all
 -- =====================================================================
 alter publication supabase_realtime add table products;
 alter publication supabase_realtime add table product_batches;
+alter publication supabase_realtime add table water_config;
+alter publication supabase_realtime add table services;
 alter publication supabase_realtime add table customers;
 alter publication supabase_realtime add table business_days;
 alter publication supabase_realtime add table transactions;

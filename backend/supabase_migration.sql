@@ -73,6 +73,21 @@ alter table if exists timeline_events
 alter table if exists water_readings 
     add column if not exists business_id uuid;
 
+-- Product Management (V1 Product Setup) columns
+alter table if exists products 
+    add column if not exists id uuid;
+alter table if exists products 
+    add column if not exists track_inventory boolean not null default true;
+alter table if exists products 
+    add column if not exists active boolean not null default true;
+alter table if exists products 
+    add column if not exists created_at timestamptz not null default now();
+
+-- Backfill existing product rows with a unique id
+update products set id = gen_random_uuid() where id is null;
+alter table if exists products alter column id set not null;
+create unique index if not exists products_id_key on products(id);
+
 -- =====================================================================
 -- STEP 3: Update role constraint BEFORE adding the new one
 -- =====================================================================
@@ -512,9 +527,9 @@ create policy "business read water_readings" on water_readings for select
     using (business_id = auth.get_business_id());
 
 create policy "owner write products" on products for all
-    using (business_id = auth.get_business_id() and auth.get_user_role() = 'owner');
+    using (business_id = auth.get_business_id() and auth.get_user_role() in ('owner', 'co_owner'));
 create policy "owner write batches" on product_batches for all
-    using (business_id = auth.get_business_id() and auth.get_user_role() = 'owner');
+    using (business_id = auth.get_business_id() and auth.get_user_role() in ('owner', 'co_owner'));
 
 create policy "business write transactions" on transactions for insert
     with check (business_id = auth.get_business_id());

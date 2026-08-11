@@ -1,0 +1,71 @@
+Business Day Gate Fix — file manifest
+======================================
+
+This ZIP contains ONLY the Business Day fix (the "database is the source
+of truth for the currently OPEN Business Day" gate fix). Extract it at
+the root of your project to overwrite/add these 7 files in place,
+preserving their existing relative paths:
+
+1. backend/repository.py
+   - Added DuplicateBusinessDayError.
+
+2. backend/supabase_repository.py
+   - Translates the PostgreSQL unique-constraint error
+     (23505 / one_open_business_day_per_business) into
+     DuplicateBusinessDayError. All other Postgrest API errors still
+     propagate unchanged.
+
+3. backend/memory_repository.py
+   - Mirrors the duplicate-open-day behavior for the memory backend, so
+     dev/tests match production.
+
+4. backend/state.py
+   - Added sync_open_business_day() so the repository (database) is
+     treated as the source of truth for the currently OPEN Business Day,
+     instead of relying on a possibly-stale local cache.
+
+5. services/business_day_service.py
+   - open_day() now calls sync_open_business_day() before attempting to
+     create a new Business Day.
+   - If an OPEN Business Day already exists (business-wide — opened by
+     the owner, a co-owner, or another worker), it returns that existing
+     day instead of attempting another INSERT.
+   - If a genuine race occurs and the INSERT hits the unique constraint,
+     it re-syncs with the repository and returns the Business Day that
+     won the race.
+   - If the race cannot be resolved, it raises BusinessDayError.
+
+6. tests/test_business_day_service.py  (new file)
+   - Regression tests: existing OPEN day is reused without an INSERT
+     (and works identically for owner/co-owner/worker roles); no OPEN
+     day results in a new one being created; the TOCTOU race is resolved
+     safely without raising; an unresolved race still raises
+     BusinessDayError cleanly.
+
+7. tests/test_supabase_repository.py
+   - New tests confirming the unique-constraint error is translated into
+     DuplicateBusinessDayError, and that unrelated Postgrest errors
+     (e.g. RLS/permission denied) still propagate unchanged.
+
+Not included (intentionally):
+- __pycache__ / *.pyc
+- Invitation, QR, deep-link, or join-flow files
+- Database schema / RLS / migration files
+- APK, build, or environment (.env) files
+- Any other unrelated source changes
+
+Verified before packaging:
+- Each of the 7 files above was confirmed to contain the fix (grep for
+  DuplicateBusinessDayError / sync_open_business_day) directly from the
+  working tree used to produce this ZIP.
+- The same code was previously verified against a clean clone of the
+  repo: patch applied cleanly, and
+    python -m unittest tests.test_business_day_page -v   (3/3 passed)
+    python -m unittest tests.test_business_day_service -v (6/6 passed)
+  both passed.
+
+To apply: extract this ZIP at the root of your project (it will
+overwrite the 6 existing files listed above and add the 1 new test
+file), then run:
+    python -m unittest tests.test_business_day_service -v
+    python -m unittest tests.test_supabase_repository -v

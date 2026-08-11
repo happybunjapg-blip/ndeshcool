@@ -15,6 +15,7 @@ def seed_products():
                 Batch(10, 55, (TODAY - timedelta(days=20)).isoformat()),
                 Batch(5, 65, (TODAY - timedelta(days=5)).isoformat()),
             ],
+            id="P-10L-BOTTLES", track_inventory=True, active=True,
         ),
         Product(
             name="20L Bottles", category=ProductCategory.BOTTLE_WATER,
@@ -23,6 +24,7 @@ def seed_products():
                 Batch(5, 105, (TODAY - timedelta(days=15)).isoformat()),
                 Batch(2, 115, (TODAY - timedelta(days=3)).isoformat()),
             ],
+            id="P-20L-BOTTLES", track_inventory=True, active=True,
         ),
         Product(
             name="5L Bottles", category=ProductCategory.BOTTLE_WATER,
@@ -31,21 +33,25 @@ def seed_products():
                 Batch(30, 33, (TODAY - timedelta(days=30)).isoformat()),
                 Batch(10, 38, (TODAY - timedelta(days=8)).isoformat()),
             ],
+            id="P-5L-BOTTLES", track_inventory=True, active=True,
         ),
         Product(
             name="1L Sachets", category=ProductCategory.BOTTLE_WATER,
             qty=100, threshold=20, selling_price=10, buying_price=5,
             batches=[Batch(100, 4.5, (TODAY - timedelta(days=10)).isoformat())],
+            id="P-1L-SACHETS", track_inventory=True, active=True,
         ),
         Product(
             name="Bottle Caps", category=ProductCategory.ACCESSORY,
             qty=200, threshold=30, selling_price=2, buying_price=2,
             batches=[Batch(200, 2, (TODAY - timedelta(days=5)).isoformat())],
+            id="P-BOTTLE-CAPS", track_inventory=True, active=True,
         ),
         Product(
             name="Water Pumps", category=ProductCategory.ACCESSORY,
             qty=3, threshold=2, selling_price=1500, buying_price=950,
             batches=[Batch(3, 950, (TODAY - timedelta(days=60)).isoformat())],
+            id="P-WATER-PUMPS", track_inventory=True, active=True,
         ),
     ]
 

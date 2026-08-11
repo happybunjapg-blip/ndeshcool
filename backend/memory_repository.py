@@ -7,12 +7,12 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from models import Product, Customer, Transaction, BusinessDay
+from models import Product, Customer, Transaction, BusinessDay, Service, WaterConfiguration
 
 try:
-    from .repository import Repository
+    from .repository import Repository, DuplicateBusinessDayError
 except ImportError:  # allow running this file directly as a script
-    from backend.repository import Repository
+    from backend.repository import Repository, DuplicateBusinessDayError
 
 
 class MemoryRepository(Repository):
@@ -30,16 +30,80 @@ class MemoryRepository(Repository):
         self._timeline: List[Dict[str, Any]] = []
         self._water_readings: List[Dict[str, Any]] = []
         self._business_days: List[BusinessDay] = []
+        self._water_config: Optional[WaterConfiguration] = None
+        self._services: List[Service] = []
 
     # ---- Products ----------------------------------------------------
     def list_products(self) -> List[Product]:
+        if self._business_id:
+            return [p for p in self._products if p.business_id == self._business_id]
         return list(self._products)
 
     def get_product(self, name: str) -> Optional[Product]:
-        return next((p for p in self._products if p.name == name), None)
+        products = self.list_products()
+        return next((p for p in products if p.name == name), None)
 
     def save_product(self, product: Product) -> None:
         pass  # already mutated in place; no-op for in-memory
+
+    # ---- Product Management (V1 Product Setup) ----------------------
+    def add_product(self, product: Product) -> None:
+        product.business_id = self._business_id or product.business_id
+        self._products.append(product)
+
+    def update_product(self, product: Product) -> None:
+        existing = next((p for p in self._products if p.id == product.id), None)
+        if existing:
+            existing.name = product.name
+            existing.selling_price = product.selling_price
+            existing.track_inventory = product.track_inventory
+            existing.active = product.active
+            existing.updated_at = product.updated_at
+
+    def set_product_active(self, product_id: str, active: bool) -> None:
+        product = next((p for p in self._products if p.id == product_id), None)
+        if product:
+            product.active = active
+            from datetime import datetime
+            product.updated_at = datetime.now().isoformat()
+
+    # ---- Water Configuration -----------------------------------------
+    def get_water_config(self) -> Optional[WaterConfiguration]:
+        if self._business_id and self._water_config:
+            if self._water_config.business_id == self._business_id:
+                return self._water_config
+            return None
+        return self._water_config
+
+    def save_water_config(self, config: WaterConfiguration) -> None:
+        config.business_id = self._business_id or config.business_id
+        self._water_config = config
+
+    # ---- Services ------------------------------------------------------
+    def list_services(self) -> List[Service]:
+        if self._business_id:
+            return [s for s in self._services if s.business_id == self._business_id]
+        return list(self._services)
+
+    def add_service(self, service: Service) -> None:
+        service.business_id = self._business_id or service.business_id
+        self._services.append(service)
+
+    def update_service(self, service: Service) -> None:
+        existing = next((s for s in self._services if s.id == service.id), None)
+        if existing:
+            existing.name = service.name
+            existing.cost = service.cost
+            existing.selling_price = service.selling_price
+            existing.active = service.active
+            existing.updated_at = service.updated_at
+
+    def set_service_active(self, service_id: str, active: bool) -> None:
+        service = next((s for s in self._services if s.id == service_id), None)
+        if service:
+            service.active = active
+            from datetime import datetime
+            service.updated_at = datetime.now().isoformat()
 
     # ---- Customers -----------------------------------------------------
     def list_customers(self) -> List[Customer]:
@@ -107,6 +171,14 @@ class MemoryRepository(Repository):
         return list(self._business_days)
 
     def open_business_day(self, business_day: BusinessDay) -> None:
+        # Mirror the real database's one_open_business_day_per_business
+        # unique constraint so this backend behaves identically for tests
+        # and local/offline dev.
+        if any(b.status == "OPEN" for b in self._business_days):
+            raise DuplicateBusinessDayError(
+                "duplicate key value violates unique constraint "
+                '"one_open_business_day_per_business"'
+            )
         self._business_days.append(business_day)
 
     def close_business_day(self, business_day_id: str, closed_at: str,

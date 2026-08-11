@@ -8,7 +8,20 @@ nothing above this layer changes.
 """
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
-from models import Product, Customer, Transaction, BusinessDay
+from models import Product, Customer, Transaction, BusinessDay, Service, WaterConfiguration
+
+
+class DuplicateBusinessDayError(Exception):
+    """Raised by a Repository's open_business_day() when the database
+    rejects the insert because a Business Day is already OPEN for this
+    business (the `one_open_business_day_per_business` unique constraint).
+
+    This is a narrow, expected race: e.g. two devices both saw "no open
+    day" and both tried to open one at nearly the same instant. It is
+    distinct from other/unexpected errors so callers can safely recover by
+    re-fetching the day that actually won, instead of treating it as a
+    generic failure.
+    """
 
 
 class Repository(ABC):
@@ -40,6 +53,58 @@ class Repository(ABC):
     @abstractmethod
     def save_product(self, product: Product) -> None:
         """Persist a product's current qty/batches/prices after mutation."""
+
+    # ---- Product Management (V1 Product Setup) ----------------------
+    @abstractmethod
+    def add_product(self, product: Product) -> None:
+        """Create a new product owned by the current business."""
+
+    @abstractmethod
+    def update_product(self, product: Product) -> None:
+        """Update a product's name/selling_price/track_inventory/active."""
+
+    @abstractmethod
+    def set_product_active(self, product_id: str, active: bool) -> None:
+        """Archive (active=False) or activate (active=True) a product."""
+
+    def list_active_products(self) -> List[Product]:
+        """Products visible to the Sales screen: active only, scoped to
+        the current business. Default implementation filters list_products();
+        backends may override for a more efficient query."""
+        return [p for p in self.list_products() if p.active]
+
+    # ---- Water Configuration -----------------------------------------
+    @abstractmethod
+    def get_water_config(self) -> Optional[WaterConfiguration]:
+        """Return the current business's water configuration, or None if
+        it hasn't been created yet."""
+
+    @abstractmethod
+    def save_water_config(self, config: WaterConfiguration) -> None:
+        """Persist the water configuration for the current business."""
+
+    # ---- Services ------------------------------------------------------
+    @abstractmethod
+    def list_services(self) -> List[Service]:
+        """List all services for the current business."""
+
+    @abstractmethod
+    def add_service(self, service: Service) -> None:
+        """Create a new service owned by the current business."""
+
+    @abstractmethod
+    def update_service(self, service: Service) -> None:
+        """Update a service's name/cost/selling_price/active."""
+
+    @abstractmethod
+    def set_service_active(self, service_id: str, active: bool) -> None:
+        """Archive (active=False) or activate (active=True) a service."""
+
+    def list_active_services(self) -> List[Service]:
+        """Services visible to the Sales screen: active only, scoped to
+        the current business. Default implementation filters list_services();
+        backends may override for a more efficient query."""
+        return [s for s in self.list_services() if s.active]
 
     # ---- Customers (credit customers only) -------------------------
     @abstractmethod

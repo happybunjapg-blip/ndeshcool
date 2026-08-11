@@ -24,6 +24,7 @@ from pages.partner.settings_page import PartnerSettingsPage
 from pages.partner.reports_page import PartnerReportsPage
 from pages.partner.performance_page import PartnerPerformancePage
 from pages.partner.funds_page import PartnerFundsPage
+from pages.partner.catalog_page import PartnerCatalogPage
 from widgets import page_content
 
 REALTIME_POLL_INTERVAL = 2.0
@@ -40,6 +41,7 @@ ROLE_NAV = {
     ],
     Role.OWNER: [
         ("dashboard", "Dashboard", ft.Icons.DASHBOARD_OUTLINED, ft.Icons.DASHBOARD),
+        ("catalog", "Catalog", ft.Icons.INVENTORY_2_OUTLINED, ft.Icons.INVENTORY_2),
         ("settings", "Settings", ft.Icons.SETTINGS_OUTLINED, ft.Icons.SETTINGS),
         ("reports", "Reports", ft.Icons.BAR_CHART_OUTLINED, ft.Icons.BAR_CHART),
         ("performance", "Performance", ft.Icons.TIMELINE_OUTLINED, ft.Icons.TIMELINE),
@@ -47,6 +49,7 @@ ROLE_NAV = {
     ],
     Role.CO_OWNER: [
         ("dashboard", "Dashboard", ft.Icons.DASHBOARD_OUTLINED, ft.Icons.DASHBOARD),
+        ("catalog", "Catalog", ft.Icons.INVENTORY_2_OUTLINED, ft.Icons.INVENTORY_2),
         ("settings", "Settings", ft.Icons.SETTINGS_OUTLINED, ft.Icons.SETTINGS),
         ("reports", "Reports", ft.Icons.BAR_CHART_OUTLINED, ft.Icons.BAR_CHART),
         ("performance", "Performance", ft.Icons.TIMELINE_OUTLINED, ft.Icons.TIMELINE),
@@ -475,13 +478,14 @@ class WaterStationApp:
             "customers": WorkerCustomersPage,
             "expenses": WorkerExpensesPage,
             "dashboard": PartnerDashboardPage,
+            "catalog": PartnerCatalogPage,
             "settings": PartnerSettingsPage,
             "reports": PartnerReportsPage,
             "performance": PartnerPerformancePage,
             "funds": PartnerFundsPage,
         }
         cls = controller_classes[page_name]
-        if page_name in ("home", "dashboard"):
+        if page_name in ("home", "dashboard", "catalog"):
             controller = cls(self.page, self.services, self._navigate_to, user=self.user)
         else:
             controller = cls(self.page, self.services, self._navigate_to)

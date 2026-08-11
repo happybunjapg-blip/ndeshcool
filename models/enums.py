@@ -26,9 +26,10 @@ class ProductCategory(str, Enum):
 
 class TransactionType(str, Enum):
     WATER_REFILL = "water_refill"          # customer's own container, water only
-    PRODUCT_SALE = "product_sale"          # accessory, no water
-    BOTTLE_WATER_SALE = "bottle_water_sale"  # new bottle + water together
+    PRODUCT_SALE = "product_sale"          # physical product, no water
+    BOTTLE_WATER_SALE = "bottle_water_sale"  # new bottle + water together (legacy)
     BULK_DELIVERY = "bulk_delivery"        # large volume delivered to a customer
+    SERVICE_SALE = "service_sale"          # delivery, installation, cleaning
     CUSTOMER_PAYMENT = "customer_payment"  # settling an existing debt, not a sale
     EXPENSE = "expense"                    # operational or capital cost
 

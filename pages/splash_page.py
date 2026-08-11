@@ -10,6 +10,13 @@ import asyncio
 import flet as ft
 import theme
 from services import Services
+from widgets.branding import (
+    waterpilot_mark,
+    waterpilot_wordmark,
+    waterpilot_tagline,
+    waterpilot_loader,
+    waterpilot_footer,
+)
 
 
 def build_splash(page: ft.Page, services: Services, on_authenticated, on_unauthenticated,
@@ -24,174 +31,128 @@ def build_splash(page: ft.Page, services: Services, on_authenticated, on_unauthe
         check_deep_link: Optional callable that returns qr_data dict or None.
         on_deep_link_found: Optional callable(qr_data) if deep link detected.
     """
-    NAVY_BG = "#0B2545"
-    NAVY_DEEP = "#081B33"
 
-    # ---- The mark: an abstract compass/navigation glyph built entirely from
-    # primitives (no image assets) — a gradient ring, a rotated "needle"
-    # diamond, and a pivot point. Reads as identity, not a literal icon. ----
+    logo = waterpilot_mark(size=168, color=theme.PRIMARY)
+    logo.opacity = 0.0
+    logo.animate_opacity = ft.Animation(theme.ANIM_DURATION_SLOW, theme.ANIMATION_CURVE)
 
-    glow_ring = ft.Container(
-        width=112, height=112, border_radius=56,
-        bgcolor=ft.Colors.with_opacity(0.28, theme.ACCENT),
-        opacity=0.0, scale=0.75,
-        animate_opacity=ft.Animation(900, ft.AnimationCurve.EASE_OUT),
-        animate_scale=ft.Animation(900, ft.AnimationCurve.EASE_OUT),
-    )
+    title_text = waterpilot_wordmark(size=38)
+    title_text.opacity = 0.0
+    title_text.animate_opacity = ft.Animation(theme.ANIM_DURATION_MEDIUM, theme.ANIMATION_CURVE)
 
-    needle = ft.Container(
-        width=40, height=40, border_radius=6,
-        gradient=ft.LinearGradient(
-            begin=ft.Alignment.TOP_CENTER, end=ft.Alignment.BOTTOM_CENTER,
-            colors=[ft.Colors.WHITE, theme.ACCENT],
-        ),
-        rotate=0.785398,  # 45 degrees, in radians
-        left=28, top=28,
-    )
-    pivot_dot = ft.Container(
-        width=10, height=10, border_radius=5, bgcolor=NAVY_BG,
-        border=ft.Border.all(2, ft.Colors.with_opacity(0.6, ft.Colors.WHITE)),
-        left=43, top=43,
-    )
+    tagline_text = waterpilot_tagline("Smart water business software for modern operators")
+    tagline_text.opacity = 0.0
+    tagline_text.animate_opacity = ft.Animation(theme.ANIM_DURATION_MEDIUM, theme.ANIMATION_CURVE)
 
-    mark_core = ft.Container(
-        width=96, height=96, border_radius=48, bgcolor=NAVY_BG,
-        content=ft.Stack([needle, pivot_dot], width=96, height=96),
-    )
-
-    mark_ring = ft.Container(
-        width=112, height=112, border_radius=56,
-        gradient=ft.LinearGradient(
-            begin=ft.Alignment.TOP_LEFT, end=ft.Alignment.BOTTOM_RIGHT,
-            colors=[theme.ACCENT, "#123A6B"],
-        ),
-        shadow=ft.BoxShadow(blur_radius=28, color=ft.Colors.with_opacity(0.35, ft.Colors.BLACK),
-                             offset=ft.Offset(0, 10)),
-        alignment=ft.Alignment.CENTER,
-        content=mark_core,
-    )
-
-    logo_wrap = ft.Container(
-        content=ft.Stack([glow_ring, mark_ring], width=112, height=112),
-        opacity=0.0, scale=0.85,
-        animate_opacity=ft.Animation(500, ft.AnimationCurve.EASE_OUT),
-        animate_scale=ft.Animation(500, ft.AnimationCurve.EASE_OUT),
-    )
-
-    title_text = ft.Text("WaterPilot", size=30, weight=ft.FontWeight.W_800, color=ft.Colors.WHITE)
-    tagline_text = ft.Text("Navigate Your Water Business", size=13, color=theme.TEXT_DIM)
-
-    wordmark_wrap = ft.Container(
-        content=ft.Column([title_text, tagline_text], spacing=4,
-                           horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+    loader_row, loader_dots = waterpilot_loader(dot_count=3, dot_size=10, spacing=12)
+    loader_wrap = ft.Container(
+        content=loader_row,
         opacity=0.0,
-        animate_opacity=ft.Animation(500, ft.AnimationCurve.EASE_OUT),
+        animate_opacity=ft.Animation(theme.ANIM_DURATION_MEDIUM, theme.ANIMATION_CURVE),
     )
 
-    status_text = ft.Text("", size=12, color=theme.TEXT_DIM, visible=False,
-                           text_align=ft.TextAlign.CENTER)
-    loading_ring = ft.ProgressRing(width=18, height=18, stroke_width=2, color=theme.ACCENT)
-    loading_wrap = ft.Container(
-        content=ft.Column([loading_ring, status_text], spacing=10,
-                           horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-        opacity=0.0,
-        animate_opacity=ft.Animation(500, ft.AnimationCurve.EASE_OUT),
+    status_text = ft.Text(
+        "",
+        style=ft.TextStyle(size=12, weight=ft.FontWeight.W_400, height=1.4),
+        color=theme.text_dim(),
+        visible=False,
+        text_align=ft.TextAlign.CENTER,
     )
+    status_wrap = ft.Container(
+        content=status_text,
+        padding=ft.Padding(0, 16, 0, 0),
+    )
+
+    footer = waterpilot_footer("Powered by ArcNova")
 
     content_column = ft.Column(
         [
-            logo_wrap,
-            ft.Container(height=20),
-            wordmark_wrap,
-            ft.Container(height=32),
-            loading_wrap,
+            logo,
+            ft.Container(height=28),
+            title_text,
+            ft.Container(height=16),
+            tagline_text,
+            ft.Container(height=42),
+            loader_wrap,
+            status_wrap,
         ],
         alignment=ft.MainAxisAlignment.CENTER,
         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        tight=False,
     )
-
-    footer_text = ft.Text("Powered by ArcNova", size=11, color=theme.TEXT_DIM)
 
     root = ft.Container(
-        content=ft.Stack(
+        content=ft.Column(
             [
-                ft.Container(content=content_column, alignment=ft.Alignment.CENTER, expand=True),
-                ft.Container(content=footer_text, alignment=ft.Alignment.CENTER, bottom=24, left=0, right=0),
+                ft.Container(height=140),
+                content_column,
+                ft.Container(expand=True),
+                ft.Container(content=footer, alignment=ft.Alignment.CENTER, padding=ft.Padding(0, 18, 0, 0)),
             ],
+            alignment=ft.MainAxisAlignment.START,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             expand=True,
         ),
-        gradient=ft.LinearGradient(
-            begin=ft.Alignment.TOP_CENTER, end=ft.Alignment.BOTTOM_CENTER,
-            colors=[NAVY_BG, NAVY_DEEP],
-        ),
+        bgcolor=theme.splash_background(),
         alignment=ft.Alignment.CENTER,
         expand=True,
-        opacity=0,
-        animate_opacity=ft.Animation(400, ft.AnimationCurve.EASE_OUT),
     )
 
-    # Status messages shown while the real session check runs alongside them.
-    # The check itself happens exactly once, during the first message.
     STATUS_MESSAGES = [
         "Checking secure session...",
         "Loading business workspace...",
-        "Preparing dashboard...",
+        "Preparing your dashboard...",
         "Almost ready...",
     ]
 
+    async def _pulse_loader_dots():
+        while True:
+            for dot in loader_dots:
+                dot.opacity = 0.95
+                page.update()
+                await asyncio.sleep(0.14)
+                dot.opacity = 0.32
+                page.update()
+                await asyncio.sleep(0.14)
+            await asyncio.sleep(0.30)
+
     async def _advance():
-        # Stage 1: page fade-in, then the mark settles in with a soft
-        # scale + a single glow ripple (no looping/bouncing motion).
-        await asyncio.sleep(0.05)
-        root.opacity = 1
-        page.update()
+        await asyncio.sleep(1.5)
 
-        await asyncio.sleep(0.15)
-        logo_wrap.opacity = 1
-        logo_wrap.scale = 1.0
+        logo.opacity = 1.0
         page.update()
+        await asyncio.sleep(0.8)
 
-        await asyncio.sleep(0.3)
-        glow_ring.opacity = 0.0
-        glow_ring.scale = 1.55
+        await asyncio.sleep(0.6)
+        title_text.opacity = 1.0
         page.update()
+        await asyncio.sleep(0.5)
 
-        # Stage 2: wordmark, then the loading state fade in.
-        await asyncio.sleep(0.25)
-        wordmark_wrap.opacity = 1
+        tagline_text.opacity = 1.0
         page.update()
+        await asyncio.sleep(0.5)
 
-        await asyncio.sleep(0.3)
-        loading_wrap.opacity = 1
+        loader_wrap.opacity = 1.0
+        status_text.visible = True
+        status_text.value = "Starting workspace..."
         page.update()
+        page.run_task(_pulse_loader_dots)
 
-        # ----------------------------------------------------------------
-        # DEEP LINK CHECK — runs BEFORE session check.
-        # Android may deliver the launch URL asynchronously, so we wait
-        # a short time for page.route to be populated.
-        # ----------------------------------------------------------------
         if check_deep_link is not None:
-            # Give Android a moment to deliver the launch URL
-            for _ in range(5):  # up to ~1.5s total wait
+            for _ in range(5):
                 qr_data = check_deep_link()
                 if qr_data is not None:
-                    print(f"[SPLASH] Deep link detected during splash: {qr_data}")
-                    status_text.value = "Invitation detected! Redirecting..."
-                    status_text.visible = True
+                    status_text.value = "Invitation detected. Redirecting..."
                     page.update()
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(0.5)
                     if on_deep_link_found:
                         on_deep_link_found(qr_data)
                     return
                 await asyncio.sleep(0.3)
 
-        # Stage 3: rotate through status messages. The real session check
-        # runs once, during the first message — the authentication logic
-        # itself is unchanged, only the surrounding presentation is new.
         user = None
         for i, message in enumerate(STATUS_MESSAGES):
             status_text.value = message
-            status_text.visible = True
             page.update()
             if i == 0:
                 try:
@@ -203,12 +164,11 @@ def build_splash(page: ft.Page, services: Services, on_authenticated, on_unauthe
         if user:
             status_text.value = f"Welcome back, {user.first_name}"
             page.update()
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.6)
             on_authenticated(user)
             return
 
         on_unauthenticated()
 
     page.run_task(_advance)
-
     return root

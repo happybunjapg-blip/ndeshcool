@@ -19,11 +19,14 @@ revenue + profit + expenses works out to exactly -30, matching the brief.
 from datetime import datetime
 from typing import Optional
 
-from constants import WATER_REFILL_PRICES, BODA_FEE, BODA_RIDER_FEE, BOTTLE_WATER_LITERS
+from constants import BODA_FEE, BODA_RIDER_FEE, BOTTLE_WATER_LITERS
 from models import TransactionType, ProductCategory, Transaction
 from backend.state import AppState
 from .inventory_service import InventoryService
 
+# Legacy defaults — the real cost/selling price per litre now lives in the
+# water configuration (WaterConfiguration model). These keep any code that
+# referenced the old module constants working as fallbacks.
 WATER_BUY_PRICE_PER_LITER = 1.0
 WATER_SELL_PRICE_PER_LITER = 10.0
 
@@ -91,13 +94,13 @@ class SalesService:
         self._require_open_business_day()
         if liters <= 0:
             raise SalesError("Refill amount must be positive.")
-        if liters in WATER_REFILL_PRICES:
-            price = WATER_REFILL_PRICES[liters]
-        else:
-            price = liters * WATER_SELL_PRICE_PER_LITER
+        # Price/profit come from the configured water pricing (per litre),
+        # never from a Water product row.
+        config = self.state.get_water_config_or_default()
+        price = config.price_for(liters)
         boda_fee = BODA_FEE if boda else 0
         revenue = price + boda_fee
-        profit = revenue - (liters * WATER_BUY_PRICE_PER_LITER)
+        profit = config.profit_for(liters) + boda_fee
         reading = self._today_water_reading()
         reading["sold_water"] += liters
         self._persist_water_reading(reading)
@@ -115,8 +118,34 @@ class SalesService:
         return tx
 
     # ---------------------------------------------------------------
-    # 2. Product Sale -- accessory only (caps, taps, pumps, stands...).
-    #    Product stock decreases. Water is never touched.
+    # 2. Service Sale -- delivery, installation, cleaning. No stock.
+    #    Revenue = selling price, profit = selling price - cost.
+    # ---------------------------------------------------------------
+    def record_service_sale(self, service_name: str, payment: str,
+                             customer_id: Optional[str] = None, on_credit: bool = False):
+        self._require_open_business_day()
+        service = next((s for s in self.state.services if s.name == service_name), None)
+        if not service:
+            raise SalesError("Service not found.")
+        if not service.active:
+            raise SalesError(f"{service_name} is not available.")
+        revenue = service.selling_price
+        profit = service.profit
+        tx = self._record(
+            TransactionType.SERVICE_SALE, revenue, profit,
+            {"service": service_name, "payment": payment, "on_credit": on_credit},
+            customer_id=customer_id,
+        )
+        if on_credit and customer_id:
+            self._add_to_balance(customer_id, revenue)
+        self.state.log_timeline(f"Service — {service_name}", "sale", f"KES {revenue:,.0f}", 0)
+        self.state.notify_change()
+        return tx
+
+    # ---------------------------------------------------------------
+    # 2b. Product Sale -- any physical product (bottles, caps, taps,
+    #     pumps...). Product stock decreases. Water is never touched
+    #     unless the product carries water (bottle+water legacy flow).
     # ---------------------------------------------------------------
     def record_product_sale(self, product_name: str, qty: float, payment: str,
                              customer_id: Optional[str] = None, on_credit: bool = False):
@@ -124,8 +153,6 @@ class SalesService:
         product = self.state.get_product(product_name)
         if not product:
             raise SalesError("Product not found.")
-        if product.category != ProductCategory.ACCESSORY:
-            raise SalesError(f"{product_name} is not an accessory product.")
         if qty > product.qty:
             raise SalesError(f"Only {product.qty:g} left.")
         cost = self.inventory.fifo_deduct(product_name, qty)
@@ -161,8 +188,9 @@ class SalesService:
         boda_fee = BODA_FEE if boda else 0
         revenue = qty * product.selling_price + boda_fee
         liters_each = BOTTLE_WATER_LITERS.get(product_name, 0)
-        # Cost = Bottle FIFO cost + Water cost (KES 1/L for the water inside)
-        water_cost = liters_each * qty * WATER_BUY_PRICE_PER_LITER
+        # Cost = Bottle FIFO cost + Water cost (from the configured water price)
+        config = self.state.get_water_config_or_default()
+        water_cost = liters_each * qty * config.cost_per_litre
         profit = revenue - cost - water_cost
         reading = self._today_water_reading()
         reading["sold_water"] += liters_each * qty
@@ -188,13 +216,15 @@ class SalesService:
                               customer_id: Optional[str] = None, status: str = "Pending",
                               on_credit: bool = False):
         self._require_open_business_day()
-        base_price_per_liter = 0.12  # simple flat bulk rate; tune per business
+        config = self.state.get_water_config_or_default()
+        base_price_per_liter = config.selling_price_per_litre * 0.5  # half-rate bulk
         revenue = liters * base_price_per_liter + transport_fee
+        profit = revenue - (liters * config.cost_per_litre)
         reading = self._today_water_reading()
         reading["sold_water"] += liters
         self._persist_water_reading(reading)
         tx = self._record(
-            TransactionType.BULK_DELIVERY, revenue, revenue,
+            TransactionType.BULK_DELIVERY, revenue, profit,
             {"liters": liters, "transport_fee": transport_fee, "driver": driver,
              "status": status, "on_credit": on_credit},
             customer_id=customer_id,

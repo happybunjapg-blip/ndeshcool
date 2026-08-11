@@ -18,8 +18,8 @@ from typing import List, Optional, Dict, Any, Callable
 
 from postgrest.exceptions import APIError
 
-from models import Product, Batch, Customer, Transaction, TransactionType, ProductCategory, BusinessDay
-from .repository import Repository
+from models import Product, Batch, Customer, Transaction, TransactionType, ProductCategory, BusinessDay, Service, WaterConfiguration
+from .repository import Repository, DuplicateBusinessDayError
 
 try:
     from supabase import create_client, Client
@@ -33,6 +33,7 @@ RECONNECT_MAX_DELAY = 30.0   # seconds
 REALTIME_TABLES = [
     "transactions", "expenses", "products", "product_batches",
     "customers", "water_readings", "business_days", "timeline_events",
+    "water_config", "services",
 ]
 
 
@@ -45,7 +46,7 @@ class SupabaseRepository(Repository):
             )
         self._url = url
         self._key = key
-        self.client: Client = create_client(url, key)
+        self.client: Any = create_client(url, key)
         self._change_callback: Optional[Callable] = None
 
         # ---- Realtime thread-safety primitives --------------------------
@@ -65,6 +66,39 @@ class SupabaseRepository(Repository):
             selling_price=row["selling_price"],
             buying_price=row["buying_price"],
             batches=[Batch(b["qty"], b["purchase_price"], str(b["purchase_date"])) for b in batch_rows],
+            id=row.get("id", ""),
+            business_id=row.get("business_id", ""),
+            track_inventory=row.get("track_inventory", True),
+            active=row.get("active", True),
+            created_at=str(row.get("created_at", "")) if row.get("created_at") else "",
+            updated_at=str(row.get("updated_at", "")) if row.get("updated_at") else "",
+            opening_stock=row.get("opening_stock", 0.0),
+        )
+
+    @staticmethod
+    def _row_to_water_config(row: dict) -> WaterConfiguration:
+        return WaterConfiguration(
+            business_id=row.get("business_id", ""),
+            cost_per_litre=row.get("cost_per_litre", 1.0),
+            selling_price_per_litre=row.get("selling_price_per_litre", 10.0),
+            refill_sizes=[float(x) for x in (row.get("refill_sizes") or [5, 10, 20])],
+            custom_allowed=row.get("custom_allowed", True),
+            created_at=str(row.get("created_at", "")) if row.get("created_at") else "",
+            updated_at=str(row.get("updated_at", "")) if row.get("updated_at") else "",
+            future=row.get("future", {}) or {},
+        )
+
+    @staticmethod
+    def _row_to_service(row: dict) -> Service:
+        return Service(
+            name=row["name"],
+            selling_price=row["selling_price"],
+            cost=row.get("cost", 0.0),
+            id=row.get("id", ""),
+            business_id=row.get("business_id", ""),
+            active=row.get("active", True),
+            created_at=str(row.get("created_at", "")) if row.get("created_at") else "",
+            updated_at=str(row.get("updated_at", "")) if row.get("updated_at") else "",
         )
 
     @staticmethod
@@ -130,23 +164,21 @@ class SupabaseRepository(Repository):
 
     # ---- Products ----------------------------------------------------
     def list_products(self) -> List[Product]:
-        try:
-            query = self._safe_select("products")
-            products = query.execute().data
-            batch_query = self.client.table("product_batches").select("*").order("id")
-            if self._business_id:
-                batch_query = batch_query.eq("business_id", self._business_id)
-            batches = batch_query.execute().data
-        except APIError as exc:
-            if exc.code == "PGRST205":
-                return []
-            raise
-        result = []
-        for p in products:
-            own_batches = [b for b in batches if b["product_name"] == p["name"]]
-            result.append(self._row_to_product(p, own_batches))
-        return result
+            try:
+                query = self._safe_select("products")
+                products = query.execute().data
+            except APIError as exc:
+                if exc.code == "PGRST205":
+                    return []
+                raise
 
+            result = []
+
+            for p in products:
+                result.append(self._row_to_product(p, []))
+
+            return result
+    
     def get_product(self, name: str) -> Optional[Product]:
         try:
             query = self.client.table("products").select("*").eq("name", name)
@@ -191,6 +223,141 @@ class SupabaseRepository(Repository):
                 }
                 for b in product.batches
             ]))
+
+    # ---- Product Management (V1 Product Setup) ----------------------
+    def add_product(self, product: Product) -> None:
+        now = datetime.now().isoformat()
+        self._safe_execute_operation(self.client.table("products").insert({
+            "id": product.id,
+            "name": product.name,
+            "business_id": self._business_id or product.business_id,
+            "category": product.category.value,
+            "qty": product.qty,
+            "threshold": product.threshold,
+            "selling_price": product.selling_price,
+            "buying_price": product.buying_price,
+            "track_inventory": product.track_inventory,
+            "active": product.active,
+            "opening_stock": product.opening_stock,
+            "created_at": now,
+            "updated_at": now,
+        }))
+
+    def update_product(self, product: Product) -> None:
+        query = self.client.table("products").update({
+            "name": product.name,
+            "selling_price": product.selling_price,
+            "track_inventory": product.track_inventory,
+            "active": product.active,
+            "updated_at": datetime.now().isoformat(),
+        }).eq("id", product.id)
+        if self._business_id:
+            query = query.eq("business_id", self._business_id)
+        self._safe_execute_operation(query)
+
+    def set_product_active(self, product_id: str, active: bool) -> None:
+        query = self.client.table("products").update({
+            "active": active,
+            "updated_at": datetime.now().isoformat(),
+        }).eq("id", product_id)
+        if self._business_id:
+            query = query.eq("business_id", self._business_id)
+        self._safe_execute_operation(query)
+
+    def list_active_products(self) -> List[Product]:
+        """Sales screen query: SELECT * FROM products WHERE business_id = X AND active = true."""
+        try:
+            query = self.client.table("products").select("*").eq("active", True)
+            if self._business_id:
+                query = query.eq("business_id", self._business_id)
+            products = query.execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
+        return [self._row_to_product(p, []) for p in products]
+
+    # ---- Water Configuration -----------------------------------------
+    def get_water_config(self) -> Optional[WaterConfiguration]:
+        try:
+            query = self.client.table("water_config").select("*")
+            if self._business_id:
+                query = query.eq("business_id", self._business_id)
+            rows = query.execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return None
+            raise
+        return self._row_to_water_config(rows[0]) if rows else None
+
+    def save_water_config(self, config: WaterConfiguration) -> None:
+        now = datetime.now().isoformat()
+        self._safe_execute_operation(self.client.table("water_config").upsert({
+            "business_id": self._business_id or config.business_id,
+            "cost_per_litre": config.cost_per_litre,
+            "selling_price_per_litre": config.selling_price_per_litre,
+            "refill_sizes": config.refill_sizes,
+            "custom_allowed": config.custom_allowed,
+            "future": config.future,
+            "updated_at": now,
+        }))
+
+    # ---- Services ------------------------------------------------------
+    def list_services(self) -> List[Service]:
+        try:
+            query = self._safe_select("services")
+            rows = query.execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
+        return [self._row_to_service(r) for r in rows]
+
+    def add_service(self, service: Service) -> None:
+        now = datetime.now().isoformat()
+        self._safe_execute_operation(self.client.table("services").insert({
+            "id": service.id,
+            "name": service.name,
+            "business_id": self._business_id or service.business_id,
+            "cost": service.cost,
+            "selling_price": service.selling_price,
+            "active": service.active,
+            "created_at": now,
+            "updated_at": now,
+        }))
+
+    def update_service(self, service: Service) -> None:
+        query = self.client.table("services").update({
+            "name": service.name,
+            "cost": service.cost,
+            "selling_price": service.selling_price,
+            "active": service.active,
+            "updated_at": datetime.now().isoformat(),
+        }).eq("id", service.id)
+        if self._business_id:
+            query = query.eq("business_id", self._business_id)
+        self._safe_execute_operation(query)
+
+    def set_service_active(self, service_id: str, active: bool) -> None:
+        query = self.client.table("services").update({
+            "active": active,
+            "updated_at": datetime.now().isoformat(),
+        }).eq("id", service_id)
+        if self._business_id:
+            query = query.eq("business_id", self._business_id)
+        self._safe_execute_operation(query)
+
+    def list_active_services(self) -> List[Service]:
+        try:
+            query = self.client.table("services").select("*").eq("active", True)
+            if self._business_id:
+                query = query.eq("business_id", self._business_id)
+            rows = query.execute().data
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                return []
+            raise
+        return [self._row_to_service(r) for r in rows]
 
     # ---- Customers (credit customers only) ------------------------------
     def list_customers(self) -> List[Customer]:
@@ -351,13 +518,27 @@ class SupabaseRepository(Repository):
         return [self._row_to_business_day(r) for r in rows]
 
     def open_business_day(self, business_day: BusinessDay) -> None:
-        self._safe_execute_operation(self.client.table("business_days").insert({
-            "id": business_day.id, "opened_at": business_day.opened_at,
-            "opened_by": business_day.opened_by, "status": business_day.status,
-            "opening_note": business_day.opening_note,
-            "business_id": self._business_id or "",
-        }))
+        try:
+            self._safe_execute_operation(self.client.table("business_days").insert({
+                "id": business_day.id, "opened_at": business_day.opened_at,
+                "opened_by": business_day.opened_by, "status": business_day.status,
+                "opening_note": business_day.opening_note,
+                "business_id": self._business_id or "",
+            }))
+        except APIError as exc:
+            # Postgres unique_violation. This is exactly the
+            # one_open_business_day_per_business constraint firing because
+            # someone else (another device/session for this business)
+            # opened a day between our caller's check and this insert.
+            if exc.code == "23505":
+                raise DuplicateBusinessDayError(str(exc)) from exc
+            raise
+    def set_session(self, access_token: str, refresh_token: str):
+            """Apply the authenticated user's session to the repository client."""
+            if not access_token or not refresh_token:
+                return
 
+            self.client.auth.set_session(access_token, refresh_token)
     def close_business_day(self, business_day_id: str, closed_at: str,
                             closed_by: str, closing_note: str) -> None:
         query = self.client.table("business_days").update({

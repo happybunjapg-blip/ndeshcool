@@ -47,6 +47,14 @@ class AuthService:
     # ----------------------------------------------------------------
     # DIAGNOSTICS
     # ----------------------------------------------------------------
+    
+    def get_current_session(self):
+            if self._client is None:
+                return None
+
+            result = self._client.auth.get_session()
+            return result.session if result else None
+    
     def _log(self, msg: str, data=None):
         print(f"[AUTH] {msg}", file=sys.stderr)
         if data:
