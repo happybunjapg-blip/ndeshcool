@@ -213,6 +213,7 @@ class WaterStationApp:
             return
 
         self.user = user
+        self.services.sync_repository_session()
         self.services.state.repo.set_business_id(user.business_id)
         self.services.state.refresh()
         self.page_controllers = {}
@@ -301,6 +302,7 @@ class WaterStationApp:
         """Called after successful login or account creation.
         This is where we FIRST load business data."""
         self.user = user
+        self.services.sync_repository_session()
         self.services.state.repo.set_business_id(user.business_id)
         self.services.state.refresh()
         self.page_controllers = {}

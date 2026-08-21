@@ -48,12 +48,52 @@ class SupabaseRepository(Repository):
         self._key = key
         self.client: Any = create_client(url, key)
         self._change_callback: Optional[Callable] = None
+        self._session_provider: Optional[Callable[[], tuple[Optional[str], Optional[str]]]] = None
+        self._last_session_signature: Optional[tuple[Optional[str], Optional[str]]] = None
 
         # ---- Realtime thread-safety primitives --------------------------
         self._realtime_pending = threading.Event()
         self._last_realtime_ts = 0.0
         self._stop_event = threading.Event()
         self._realtime_thread: Optional[threading.Thread] = None
+        self._install_authenticated_table_wrapper()
+
+    def _install_authenticated_table_wrapper(self) -> None:
+        """Wrap client.table() so each repository query can refresh auth."""
+        original_table = self.client.table
+
+        def _table_with_session(*args, **kwargs):
+            self._ensure_authenticated_session()
+            return original_table(*args, **kwargs)
+
+        self.client.table = _table_with_session
+
+    def set_session_provider(
+        self,
+        provider: Callable[[], tuple[Optional[str], Optional[str]]],
+    ) -> None:
+        """Set a callback that returns (access_token, refresh_token)."""
+        self._session_provider = provider
+
+    def _ensure_authenticated_session(self) -> None:
+        """Apply latest auth tokens from the provider if they changed."""
+        provider = getattr(self, "_session_provider", None)
+        if not provider:
+            return
+        try:
+            access_token, refresh_token = provider()
+        except Exception:
+            return
+        signature = (access_token, refresh_token)
+        if signature == getattr(self, "_last_session_signature", None):
+            return
+        self.set_session(access_token or "", refresh_token)
+
+    def _apply_access_token(self, access_token: str) -> None:
+        """Set JWT for PostgREST requests when refresh token is unavailable."""
+        postgrest = getattr(self.client, "postgrest", None)
+        if postgrest and hasattr(postgrest, "auth"):
+            postgrest.auth(access_token)
 
     # ---- Row <-> model mapping ------------------------------------------
     @staticmethod
@@ -128,8 +168,9 @@ class SupabaseRepository(Repository):
 
     def _apply_business_filter(self, query):
         """Append business_id filter to a query if set."""
-        if self._business_id:
-            return query.eq("business_id", self._business_id)
+        business_id = getattr(self, "_business_id", None)
+        if business_id:
+            return query.eq("business_id", business_id)
         return query
 
     def _safe_select(self, table: str):
@@ -518,12 +559,13 @@ class SupabaseRepository(Repository):
         return [self._row_to_business_day(r) for r in rows]
 
     def open_business_day(self, business_day: BusinessDay) -> None:
+        business_id = getattr(self, "_business_id", None)
         try:
             self._safe_execute_operation(self.client.table("business_days").insert({
                 "id": business_day.id, "opened_at": business_day.opened_at,
                 "opened_by": business_day.opened_by, "status": business_day.status,
                 "opening_note": business_day.opening_note,
-                "business_id": self._business_id or "",
+                "business_id": business_id or "",
             }))
         except APIError as exc:
             # Postgres unique_violation. This is exactly the
@@ -533,12 +575,18 @@ class SupabaseRepository(Repository):
             if exc.code == "23505":
                 raise DuplicateBusinessDayError(str(exc)) from exc
             raise
-    def set_session(self, access_token: str, refresh_token: str):
-            """Apply the authenticated user's session to the repository client."""
-            if not access_token or not refresh_token:
-                return
+    def set_session(self, access_token: str, refresh_token: Optional[str] = None):
+        """Apply the authenticated user's session to the repository client."""
+        if not access_token:
+            return
 
+        # Full auth session when both tokens exist; otherwise at least
+        # apply access JWT so PostgREST queries run as authenticated.
+        if refresh_token:
             self.client.auth.set_session(access_token, refresh_token)
+        else:
+            self._apply_access_token(access_token)
+        self._last_session_signature = (access_token, refresh_token)
     def close_business_day(self, business_day_id: str, closed_at: str,
                             closed_by: str, closing_note: str) -> None:
         query = self.client.table("business_days").update({

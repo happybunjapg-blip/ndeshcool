@@ -26,36 +26,8 @@ class Services:
         self.state = AppState(repository)
         self.session = SessionService()
         self.auth = AuthService(session_service=self.session)
-
-    def sync_repository_session(self):
-            session = self.auth.get_current_session()
-
-            if session and hasattr(self.state.repo, "set_session"):
-                self.state.repo.set_session(
-                    session.access_token,
-                    session.refresh_token,
-            )
-
-
-    def sync_repository_session(self):
-            """Synchronize the authenticated Supabase session with the repository."""
-            if not hasattr(self.state.repo, "set_session"):
-                return
-
-            session = self.auth._client.auth.get_session()
-
-            if session and session.session:
-                self.state.repo.set_session(
-                    session.session.access_token,
-                    session.session.refresh_token,
-                )
-
-
-    def __init__(self):
-        repository = config.build_repository()
-        self.state = AppState(repository)
-        self.session = SessionService()
-        self.auth = AuthService(session_service=self.session)
+        if hasattr(self.state.repo, "set_session_provider"):
+            self.state.repo.set_session_provider(self._get_auth_tokens_for_repository)
         self.inventory = InventoryService(self.state)
         self.sales = SalesService(self.state, self.inventory)
         self.customers = CustomerService(self.state)
@@ -63,6 +35,44 @@ class Services:
         self.business_day = BusinessDayService(self.state)
         self.services_catalog = ServiceService(self.state)
         self.water_config = WaterConfigService(self.state)
+
+    def _get_auth_tokens_for_repository(self):
+        """Best-effort source of current auth tokens for repository sync."""
+        if self.auth._client:
+            try:
+                result = self.auth._client.auth.get_session()
+                session = getattr(result, "session", None)
+                if session and session.access_token:
+                    return session.access_token, session.refresh_token
+            except Exception:
+                pass
+
+        access_token = self.session.get_access_token()
+        refresh_token = self.session.get_refresh_token()
+        return access_token, refresh_token
+
+    def sync_repository_session(self):
+        """Propagate the authenticated Supabase session (access + refresh
+        tokens) from AuthService's client onto the repository's own
+        Supabase client.
+
+        AuthService and SupabaseRepository each hold their own, independent
+        Supabase `Client` instance. Authenticating via AuthService (e.g.
+        restoring a saved session on splash, or signing in) only updates
+        AuthService's client -- the repository's client remains anonymous
+        until this is called, which causes writes gated by RLS/table grants
+        (e.g. UPDATE business_days) to fail with 42501 permission denied
+        even though the user is "logged in".
+
+        Must be called after any successful authentication/session restore
+        and before any authenticated repository operation.
+        """
+        if not hasattr(self.state.repo, "set_session"):
+            return
+
+        access_token, refresh_token = self._get_auth_tokens_for_repository()
+        if access_token:
+            self.state.repo.set_session(access_token, refresh_token)
 
 
 __all__ = ["Services", "AuthService", "InventoryService", "SalesService", "SalesError",
